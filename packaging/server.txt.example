@@ -1,0 +1,9 @@
+# Rename this file to server.txt.
+#
+# One Jellyfin server per line. Use the address and port you use to reach the
+# web interface. http:// only, https:// will not connect. If you leave the
+# scheme off, http:// is assumed.
+#
+# Lines starting with # are ignored.
+
+http://192.168.1.10:8096

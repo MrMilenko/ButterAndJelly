@@ -1,0 +1,74 @@
+--- /Users/milenko/retro-chocolate-experimental/SDL2x360/SDL2x360/src/render/xbox360/SDL_render_d3d.c	2026-08-24 18:22:24
++++ third_party/SDL2x360/SDL2x360/src/render/xbox360/SDL_render_d3d.c	2026-09-06 17:39:34
+@@ -951,6 +951,37 @@
+     if (FAILED(result)) {
+         return D3D_SetError("SetTexture()", result);
+     }
++
++#ifdef __XBOX_360__
++    /* And set the fetch constant directly, because SetTexture does not arrive
++     * intact under this toolchain.
++     *
++     * D3DDevice_SetTexture_Inline works out which fetch constants a binding
++     * dirties and passes that to the library as a UINT64:
++     *
++     *     UINT64 pendingMask3 = D3DTAG_MASKENCODE(...);
++     *     D3DDevice_SetTexture(pDevice, Sampler, pTexture, pendingMask3);
++     *
++     * OXDK360's llvm/README.md lists 64-bit integer arguments as a known gap
++     * in the Xenon ABI patch: clang splits a long long into two 32-bit halves
++     * across two argument slots, where the XDK's own compiler passes one
++     * 64-bit register. So the mask the library receives is not the mask that
++     * was computed, the fetch constant is never marked dirty, and the GPU goes
++     * on sampling whatever it had -- which is why every texture on screen was
++     * the same one however correctly each was created, uploaded and bound.
++     *
++     * SetTextureFetchConstant takes a UINT and a pointer and nothing else, so
++     * it crosses the boundary intact. SetTexture above is left in place to
++     * keep D3D's own bookkeeping straight; this is what actually reaches the
++     * hardware.
++     *
++     * The same gap applies to SetStreamSource, SetVertexShaderConstantFN and
++     * SetPixelShaderConstantFN, which take the same kind of mask. Fixing it
++     * properly belongs in OXDK360, not here. */
++    IDirect3DDevice9_SetTextureFetchConstant(
++        device, GPU_CONVERT_D3D_TO_HARDWARE_TEXTUREFETCHCONSTANT(sampler),
++        (IDirect3DBaseTexture9 *)texture->texture);
++#endif
+     return 0;
+ }
+ 
+@@ -1162,12 +1193,32 @@
+     const int vboidx = data->currentVertexBuffer;
+     IDirect3DVertexBuffer9 *vbo = NULL;
+     const SDL_bool istarget = renderer->target != NULL;
++
++#ifdef __XBOX_360__
++    /* Draw immediate on this console: no vertex buffer.
++     *
++     * Every renderer on this machine that draws many textures in a frame does
++     * it this way and none of them uses a vertex buffer -- FakeGLX360 for
++     * Quake, XBMC-360's GUI textures, and XBMC-360's font cache, all
++     * SetTexture followed by DrawPrimitiveUP. The SDL2x360 titles that do work
++     * (Chocolate Doom, Doom Retro) draw a single framebuffer texture, so the
++     * batched vertex-buffer path has never had to interleave two textures.
++     *
++     * The buffer it replaces is filled by a plain memcpy into a locked
++     * D3DPOOL_DEFAULT buffer with no DISCARD and no fence, and then cycles
++     * through several buffers "so D3D has some time with the data" -- a
++     * heuristic, not synchronisation. DrawPrimitiveUP copies the vertices into
++     * the command buffer, which is neither racy nor stale. */
++    const SDL_bool useVertexBuffer = SDL_FALSE;
++#else
++    const SDL_bool useVertexBuffer = SDL_TRUE;
++#endif
+ 
+     if (D3D_ActivateRenderer(renderer) < 0) {
+         return -1;
+     }
+ 
+-    if (vertsize > 0) {
++    if (useVertexBuffer && vertsize > 0) {
+         /* upload the new VBO data for this set of commands. */
+         vbo = data->vertexBuffers[vboidx];
+         if (data->vertexBufferSize[vboidx] < vertsize) {

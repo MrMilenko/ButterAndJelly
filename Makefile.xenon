@@ -1,0 +1,201 @@
+# Xenon Butter and Jelly: the Xbox 360 build, through OXDK.
+#
+#   make -f Makefile.xenon                       build default.xex
+#   XBDM_HOST=192.168.x.x make -f Makefile.xenon run
+#
+# The same tree as the Wii U build. The core (HLS, the TS demuxer, the Jellyfin
+# client, JSON, settings) is endian clean and already runs big endian on a
+# PowerPC, so it carries over as source; what changes is underneath it.
+#
+# What is not here yet, and what each one costs:
+#
+#   SDL_ttf     no 360 build exists. FreeType is pure C with no OS coupling
+#               beyond malloc and file IO, so this is a port, not a rewrite.
+#   SDL_image   likewise. Only JPEG and PNG are wanted (Jellyfin artwork), so
+#               stb_image would remove the dependency outright on both consoles.
+#   libcurl     the XDK has Berkeley sockets through xnet, and every Jellyfin
+#               call here is plain HTTP/1.1. TLS is the part that needs a real
+#               port, and only for servers reached over HTTPS.
+#   mpg123      MP3, which the server transcodes to. minimp3 is a single header
+#               and would suit both consoles better than mpg123 does.
+#
+# One thing above all of those: OXDK's libc++ is built with _LIBCPP_HAS_THREADS 0,
+# because libc++'s Win32 thread backend wants fiber-local storage (FlsAlloc) that
+# this console has no header for. So std::thread, std::mutex and
+# std::condition_variable do not exist here, and this client is threaded
+# throughout: the player runs separate download and decode threads, and
+# worker.cpp, log.cpp and video_frame.cpp all take locks. SDL2x360 does have
+# threads (SDL_systhread, SDL_sysmutex, SDL_syscond_cv, SDL_syssem, all on the
+# XDK), and SDL is a dependency on every platform already, so the way through is
+# a small threading layer in src/core over SDL rather than std::thread.
+#
+# Video is stubbed deliberately; src/platform/xenon/video_decoder_xenon.cpp says
+# why. Note also that SDL's YUV path here hands D3D9 the PC ps_2_0 blobs SDL
+# ships, which are not Xenos microcode, so it disables itself at renderer
+# creation. The base textured quad path (x360shaders) is the one that works.
+
+# OXDK is a submodule of this repository. Set OXDK_DIR to use one elsewhere.
+OXDK_DIR    ?= third_party/OXDK
+OXDK_TARGET := xbox360
+XDK_DIR     ?= $(HOME)/xdk360-extract/sdk/XDK
+
+# The Xenon calling convention lives behind a subtarget feature in a patched
+# clang. A stock clang accepts the flag with a warning and then compiles the
+# whole title with SysV frames, which links, wraps, and is wrong in every
+# function that calls into XDK code, so name the patched one here.
+CLANG     ?= $(HOME)/llvm-xenon/build/bin/clang
+XENON_ABI := 1
+
+# C++ needs libc++ built from our own headers: the XDK ships Microsoft's C++
+# library, which mangles MSVC-style, while clang mangles Itanium, so references
+# never meet. Not LIBCXX_LIB, though: that is for iostreams and locale, and
+# nothing here includes either.
+OXDK360_LIBCXX := 1
+
+XEX_TITLE := butterandjelly
+XEX_STACK := 0x100000
+
+XDK_LIBS ?= xapilib,d3d9,d3dx9,xgraphics,xboxkrnl,xnet,xaudio2,xmcore,oldnames,libcMT
+
+# SDL is compiled into the title, not linked; see mk/sdl2x360.mk. It is vendored
+# rather than shared with the other ports on this machine because oxdk360.mk
+# builds objects next to their sources: one SDL2x360 tree shared between two
+# titles gets one title's objects and the other title's flags.
+SDL2X360_DIR ?= third_party/SDL2x360
+ifeq ($(wildcard $(SDL2X360_DIR)/SDL2x360/include/SDL.h),)
+$(error $(SDL2X360_DIR) does not hold a patched SDL2x360 checkout)
+endif
+include mk/sdl2x360.mk
+include mk/ffmpeg.mk
+
+APP_SRCS := \
+    src/main.cpp \
+    src/core/thread.cpp \
+    src/core/log.cpp \
+    src/core/json.cpp \
+    src/core/ts_demux.cpp \
+    src/core/video_frame.cpp \
+    src/core/hls.cpp \
+    src/core/settings.cpp \
+    src/core/audio_decoder_minimp3.cpp \
+    src/core/audio_decoder_mpg123.cpp \
+    src/core/audio_output.cpp \
+    src/core/player.cpp \
+    src/core/jellyfin.cpp \
+    src/core/discovery.cpp \
+    src/core/worker.cpp \
+    src/platform/http_sockets.cpp \
+    src/platform/xenon/platform_xenon.cpp \
+    src/platform/xenon/video_decoder_ffmpeg1.cpp \
+    src/ui/app.cpp \
+    src/ui/art_cache.cpp \
+    src/ui/render.cpp \
+    src/ui/image_load_sdl.cpp \
+    src/ui/image_load_stb.cpp \
+    src/ui/text_font_stb.cpp \
+    src/ui/text_font_ttf.cpp \
+    src/platform/xenon/oxdk360_shim.c \
+    third_party/cJSON/cJSON.c
+
+SRCS := $(SDL2X360_SRCS) $(FFMPEG_SRCS) $(APP_SRCS)
+
+# _XENON is defined by the toolchain itself, which is what src/core/platform.h
+# keys the console's name and colour off; it is not repeated here.
+#
+# The XDK ships SAL 1 and its headers carry SAL 2 annotations that clang would
+# otherwise read as K&R prototypes, the same definition every other OXDK
+# port needs.
+PROJ_INC  := -Isrc -Ithird_party/cJSON -Ithird_party/stb -Ithird_party/minimp3 \
+             $(FFMPEG_USE_FLAGS) \
+             -I$(SDL2X360_DIR)/SDL2x360/include \
+             -I$(SDL2X360_DIR)/SDL2x360/src \
+             -I$(SDL2X360_DIR)/x360shaders
+PROJ_DEFS := -D_XBOX -D__XBOX_360__ -DNDEBUG '-D_Releases_lock_(x)='
+
+CFLAGS   := -O2 -w $(PROJ_INC) $(PROJ_DEFS) -Wno-implicit-function-declaration \
+            -include src/platform/xenon/xenon_compat.h
+# No RTTI: nothing here uses dynamic_cast or typeid, but libc++'s std::function
+# carries a type_info comparison for target_type() that would otherwise want
+# libc++abi, which this target does not have, any more than it has an
+# unwinder for the exceptions oxdk360.mk already switches off.
+CXXFLAGS := -O2 -w -std=gnu++17 -fno-rtti $(PROJ_INC) $(PROJ_DEFS)
+
+include $(OXDK_DIR)/oxdk.mk
+
+# FFmpeg's own translation units need FFmpeg's own flags: see mk/ffmpeg.mk.
+# A target-specific variable rather than a pattern rule, because oxdk360.mk
+# already installs a generic "%.o: %.c" and which of two matching pattern rules
+# wins is not worth relying on.
+$(FFMPEG_SRCS:.c=.o): CFLAGS += $(FFMPEG_BUILD_FLAGS)
+
+# ---------------------------------------------------------------------------
+# Portability check
+#
+# The libraries above are not ported yet, so the whole title does not link.
+# What can be checked today is that the platform independent core compiles for
+# a 32-bit big-endian PowerPC with this exact toolchain, which is where sign,
+# width and alignment mistakes show up.
+# ---------------------------------------------------------------------------
+
+# video_frame.cpp and log.cpp are deliberately not here: they use std::thread
+# and std::mutex, which this libc++ does not have (see the note above).
+CORE_CHECK_SRCS := src/core/json.cpp src/core/ts_demux.cpp \
+                   src/core/hls.cpp src/core/settings.cpp \
+                   src/platform/xenon/platform_xenon.cpp \
+                   src/platform/xenon/video_decoder_ffmpeg1.cpp \
+                   third_party/cJSON/cJSON.c
+
+core-check:
+	@rc=0; for f in $(CORE_CHECK_SRCS); do \
+	    case $$f in \
+	      *.c)   $(CLANG) $(OXDK360_CFLAGS) $(CFLAGS) -c $$f -o /dev/null ;; \
+	      *)     $(CLANG) $(OXDK360_CXXFLAGS) $(CXXFLAGS) -c $$f -o /dev/null ;; \
+	    esac || rc=1; \
+	done; \
+	test $$rc -eq 0 && echo "core-check: the portable core compiles for Xenon"
+
+.PHONY: core-check
+
+# ---------------------------------------------------------------------------
+# Assets
+#
+# The fonts are read at runtime from game:\, which is the directory the XEX was
+# launched from, so they have to be deployed alongside it. oxdk360.mk's own
+# deploy target sends the XEX and nothing else.
+# ---------------------------------------------------------------------------
+
+# Laid out on the console exactly as they are here, because the code asks for
+# game:\fonts\..., since assets/ is the root that becomes game:\.
+ASSET_FILES := fonts/NotoSans-Regular.ttf fonts/NotoSans-Bold.ttf
+
+# The separator swap is done by make rather than by the shell: a backslash
+# inside a recipe has to survive make, then sh, then the quoting around it,
+# and doing it here is one rule instead of three layers of escaping.
+deploy-assets: check-host
+	@$(XBDM) $(XBDM_HOST) cmd 'mkdir name="$(XEX_REMOTE_DIR)\fonts"' >/dev/null 2>&1 || true
+	@$(XBDM) $(XBDM_HOST) cmd 'mkdir name="$(XEX_REMOTE_DIR)\data"' >/dev/null 2>&1 || true
+	@$(XBDM) $(XBDM_HOST) cmd 'mkdir name="$(XEX_REMOTE_DIR)\data\art"' >/dev/null 2>&1 || true
+	$(foreach f,$(ASSET_FILES),\
+	    $(XBDM) $(XBDM_HOST) deploy assets/$(f) '$(XEX_REMOTE_DIR)\$(subst /,\,$(f))' &&) true
+
+# UDP discovery finds nothing from this console yet, so a server can be named
+# outright instead. The client reads one URL per line from server.txt beside the
+# executable, at game:\server.txt, and lists it ahead of anything discovery
+# turned up. Beside the XEX rather than in the data directory because the data
+# directory is the title's own cache device, which XBDM cannot write to.
+#
+#   XBDM_HOST=... JELLYFIN=http://192.168.1.10:8096 make -f Makefile.xenon deploy-server
+deploy-server: check-host
+	@test -n "$(JELLYFIN)" || \
+	    { echo "set JELLYFIN to the server URL, e.g. JELLYFIN=http://192.168.1.10:8096"; exit 1; }
+	@printf '%s\n' '$(JELLYFIN)' > $(OUTPUT_DIR)/.server.txt
+	$(XBDM) $(XBDM_HOST) deploy $(OUTPUT_DIR)/.server.txt '$(XEX_REMOTE_DIR)\server.txt'
+	@rm -f $(OUTPUT_DIR)/.server.txt
+
+# Everything the console needs, in one go.
+install: deploy deploy-assets
+
+run-all: install
+	$(XBDM) $(XBDM_HOST) cmd 'magicboot title="$(XEX_REMOTE_DIR)\default.xex" directory="$(XEX_REMOTE_DIR)"'
+
+.PHONY: deploy-assets deploy-server install run-all

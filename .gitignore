@@ -1,0 +1,16 @@
+.DS_Store
+
+# Build output
+build/
+dist/
+default.xex
+*.o
+*.a
+*.elf
+*.rpx
+*.wuhb
+*.xex
+.oxdklink/
+
+# Local settings and caches
+data/

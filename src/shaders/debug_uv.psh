@@ -1,0 +1,22 @@
+; Diagnostic shader: ignores both textures and paints the interpolated
+; texture coordinate. Red rises left to right, green top to bottom.
+;
+; What the screen shows says which half of the pipeline is at fault:
+;   a red/green ramp inside letterbox bars  -> geometry and interpolation are
+;                                              fine, so the fault is sampling
+;   a ramp filling the whole screen         -> vertex positions are wrong
+;   nothing, or the old gradient            -> the draw is not landing at all
+
+; $MODE = "UniformRegister"
+
+; $NUM_SPI_PS_INPUT_CNTL = 1
+; $SPI_PS_INPUT_CNTL[0].semantic = 0
+; $SPI_PS_INPUT_CNTL[0].default_val = 1
+
+00 ALU: ADDR(32) CNT(5)
+      0  x: MOV R1.x, R0.x
+         y: MOV R1.y, R0.y
+         z: MOV R1.z, 0.0f
+         w: MOV R1.w, (0x3F800000, 1.0f).x
+01 EXP_DONE: PIX0, R1
+END_OF_PROGRAM
