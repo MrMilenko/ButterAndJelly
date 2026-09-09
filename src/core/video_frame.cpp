@@ -63,9 +63,22 @@ const uint8_t* ClampTable()
 // pixel: {red, green, blue, alpha}.
 struct ByteOrder { int r, g, b, a; };
 
+// A memory probe rather than arithmetic, so it cannot disagree with the
+// machine it is running on.
+static int ByteOfMask(uint32_t mask)
+{
+    uint32_t word = mask;
+    const uint8_t* bytes = (const uint8_t*)&word;
+    for (int i = 0; i < 4; ++i) {
+        if (bytes[i] == 0xFF) return i;
+    }
+    return 0;
+}
+
 inline ByteOrder OrderFor(PixelOrder order)
 {
     if (order == PixelOrder::Argb) return ByteOrder{ 1, 2, 3, 0 };
+    if (order == PixelOrder::Bgra) return ByteOrder{ 2, 1, 0, 3 };
     return ByteOrder{ 0, 1, 2, 3 };
 }
 
@@ -113,6 +126,46 @@ void ConvertBand(const Nv12Frame& frame, uint8_t* destination,
 }
 
 }  // namespace
+
+void PackNv12ToYuy2(const Nv12Frame& frame, uint8_t* destination,
+                    int destinationStride)
+{
+    if (!frame.valid() || !destination) return;
+
+    const bool planar = frame.chromaLayout == ChromaLayout::Planar;
+    const int step = planar ? 1 : 2;
+
+    for (int y = 0; y < frame.height; ++y) {
+        const uint8_t* lumaRow = frame.luma.data() + (size_t)y * frame.lumaStride;
+        const size_t rowOffset = (size_t)(y / 2) * frame.chromaStride;
+        const uint8_t* uRow = frame.chroma.data() + rowOffset;
+        const uint8_t* vRow = planar ? uRow + frame.vPlaneOffset() : uRow + 1;
+
+        uint8_t* out = destination + (size_t)y * destinationStride;
+
+        for (int x = 0; x + 1 < frame.width; x += 2) {
+            const int c = (x / 2) * step;
+            out[0] = lumaRow[x];
+            out[1] = uRow[c];
+            out[2] = lumaRow[x + 1];
+            out[3] = vRow[c];
+            out += 4;
+        }
+    }
+}
+
+PixelBytes PixelBytesFromMasks(uint32_t rMask, uint32_t gMask,
+                               uint32_t bMask, uint32_t aMask)
+{
+    PixelBytes bytes;
+    bytes.r = ByteOfMask(rMask);
+    bytes.g = ByteOfMask(gMask);
+    bytes.b = ByteOfMask(bMask);
+    // A fully opaque pixel still needs somewhere to put the alpha: whichever
+    // byte the other three left free.
+    bytes.a = aMask ? ByteOfMask(aMask) : (6 - bytes.r - bytes.g - bytes.b);
+    return bytes;
+}
 
 void ConvertNv12ToRgba(const Nv12Frame& frame, uint8_t* destination,
                        int destinationStride, ColorSpace space,
@@ -198,14 +251,24 @@ void Nv12Converter::convert(const Nv12Frame& frame, uint8_t* destination,
                             int destinationStride, ColorSpace space,
                             PixelOrder order)
 {
+    const ByteOrder o = OrderFor(order);
+    PixelBytes bytes;
+    bytes.r = o.r; bytes.g = o.g; bytes.b = o.b; bytes.a = o.a;
+    convert(frame, destination, destinationStride, space, bytes);
+}
+
+void Nv12Converter::convert(const Nv12Frame& frame, uint8_t* destination,
+                            int destinationStride, ColorSpace space,
+                            PixelBytes bytes)
+{
     if (!frame.valid() || !destination) return;
 
     const Coefficients& c = (space == ColorSpace::Bt709) ? kBt709 : kBt601;
+    const ByteOrder o = ByteOrder{ bytes.r, bytes.g, bytes.b, bytes.a };
     const int threads = (int)impl_->workers.size() + 1;
 
     if (threads == 1) {
-        ConvertBand(frame, destination, destinationStride, c, 0, frame.height,
-                OrderFor(order));
+        ConvertBand(frame, destination, destinationStride, c, 0, frame.height, o);
         return;
     }
 
@@ -219,7 +282,7 @@ void Nv12Converter::convert(const Nv12Frame& frame, uint8_t* destination,
         impl_->destinationStride = destinationStride;
         impl_->coefficients      = &c;
         impl_->bandRows          = bandRows;
-        impl_->order             = OrderFor(order);
+        impl_->order             = o;
         impl_->outstanding       = threads - 1;
         ++impl_->generation;
     }
@@ -227,7 +290,7 @@ void Nv12Converter::convert(const Nv12Frame& frame, uint8_t* destination,
 
     // The calling thread does the first band rather than blocking on workers.
     ConvertBand(frame, destination, destinationStride, c,
-                0, std::min(frame.height, bandRows), OrderFor(order));
+                0, std::min(frame.height, bandRows), o);
 
     bj::Lock lock(impl_->mutex);
     impl_->doneCv.wait(lock, [&] { return impl_->outstanding == 0; });

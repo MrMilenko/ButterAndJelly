@@ -3,9 +3,10 @@
 ```sh
 git clone --recursive https://github.com/MrMilenko/ButterAndJelly
 cd ButterAndJelly
-scripts/build.sh            # both
+scripts/build.sh            # all three
 scripts/build.sh wiiu
 scripts/build.sh xenon
+scripts/build.sh xbox
 scripts/build.sh clean
 ```
 
@@ -16,12 +17,12 @@ Cloned without `--recursive`: `git submodule update --init`.
 
 ## Requirements
 
-| | Wii U | Xbox 360 |
-| --- | --- | --- |
-| Toolchain | devkitPPC and wut | OXDK, submodule in `third_party/OXDK` |
-| Build | cmake, ninja | make |
-| SDK | none | Xbox 360 XDK, yours |
-| Output | `butterandjelly.wuhb` | `default.xex` and `fonts/` |
+| | Wii U | Xbox 360 | Xbox |
+| --- | --- | --- | --- |
+| Toolchain | devkitPPC and wut | OXDK, submodule in `third_party/OXDK` | OXDK |
+| Build | cmake, ninja | make | make, nasm |
+| SDK | none | Xbox 360 XDK, yours | 2003 Xbox XDK, yours |
+| Output | `butterandjelly.wuhb` | `default.xex` and `fonts/` | `default.xbe` and `fonts/` |
 
 ## Wii U
 
@@ -42,6 +43,24 @@ third_party/OXDK/oxdk doctor         # what it found
 
 Set `XDK_DIR` to your XDK, the directory holding `lib/xbox/xboxkrnl.lib`.
 `~/xdk360/XDK` and `~/xdk360-extract/sdk/XDK` are found automatically.
+
+## Xbox
+
+The same OXDK checkout as the 360, targeting x86 instead, so no separate
+toolchain build is needed. It uses the 2003 Xbox XDK rather than the 360's.
+
+```sh
+make -f Makefile.xbox
+```
+
+nasm assembles libavcodec's MMX and SSE paths. Without it:
+
+```sh
+make -f Makefile.xbox FFMPEG_SIMD=0
+```
+
+which builds the same tree in plain C at roughly half the decode speed. Useful
+for telling a decoder fault from a bad input.
 
 ## Desktop
 

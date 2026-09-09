@@ -26,6 +26,8 @@
 #include "core/video_frame.h"
 #include "core/worker.h"
 #include "ui/art_cache.h"
+
+#include <map>
 #include "ui/render.h"
 
 // A d-pad-shaped action, whatever produced it. Keyboard, GamePad, Pro
@@ -278,19 +280,23 @@ private:
     // so fast d-pad scrolling cannot show the wrong library's contents.
     int  itemsRequestId_ = 0;
 
+    // Library listings, kept for the session: moving along the sidebar
+    // otherwise refetches every item each time.
+    std::map<std::string, std::vector<JfItem>> itemsCache_;
+
     // Detail
     JfItem detailItem_;
 
     // Playback
     std::unique_ptr<Player> player_;
 
-    // Two bands, not three. The isolated benchmark converts a 720p frame in
-    // 13.9ms across three threads, but during playback it measured 19-22ms,
-    // because a third converter thread leaves the streaming and decoding
-    // thread nothing to run on. Two converting plus one streaming fits the
-    // console's three cores without them fighting.
-#ifdef __WIIU__
+    // One converter thread per core the streaming and decoding threads are
+    // not already using. _XENON is tested first: _XBOX is defined on both
+    // Xboxes.
+#if defined(__WIIU__)
     Nv12Converter videoConverter_{ 2 };
+#elif defined(_XBOX) && !defined(_XENON)
+    Nv12Converter videoConverter_{ 1 };
 #else
     Nv12Converter videoConverter_{ 3 };
 #endif
@@ -308,6 +314,9 @@ private:
     // frame in 13.9ms into a plain buffer and the same code took 19-22ms
     // writing into the locked texture.
     std::vector<uint8_t> videoStaging_;
+
+    // Channel byte offsets for the texture format actually in use.
+    PixelBytes videoBytes_;
 
     // The frame currently on screen. Held rather than drawn immediately
     // because the GPU path samples it during drawing, not before.

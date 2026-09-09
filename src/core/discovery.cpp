@@ -23,7 +23,7 @@
 #include <string>
 #include <vector>
 
-#if defined(_XENON)
+#if defined(_XBOX)
   // The console's sockets are Winsock's names over the XDK's own stack: winsockx.h
   // defines recvfrom, sendto and the rest as macros onto XSocket*, so the code
   // below is unchanged. This has to come before the _WIN32 branch, because the
@@ -70,7 +70,7 @@ namespace {
 // lives in WSAGetLastError instead. Everything below reports through this.
 int SocketError()
 {
-#if defined(_XENON) || defined(_WIN32)
+#if defined(_XBOX) || defined(_WIN32)
     return WSAGetLastError();
 #else
     return errno;
@@ -81,7 +81,7 @@ int SocketError()
 // ioctlsocket, and everything else has fcntl.
 bool SetNonBlocking(socket_t sock)
 {
-#if defined(_XENON) || defined(_WIN32)
+#if defined(_XBOX) || defined(_WIN32)
     unsigned long on = 1;
     return ioctlsocket(sock, FIONBIO, &on) == 0;
 #elif defined(__WIIU__)
@@ -98,7 +98,7 @@ bool SetNonBlocking(socket_t sock)
 // small integer, so "sock + 1" is a nonsense number to hand it.
 int SelectWidth(socket_t sock)
 {
-#if defined(_XENON) || defined(_WIN32)
+#if defined(_XBOX) || defined(_WIN32)
     (void)sock;
     return 0;
 #else

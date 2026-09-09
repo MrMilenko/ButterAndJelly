@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-// H.264 on the Xbox 360, in software, through libavcodec 54.
+// H.264 on both Xboxes, in software, through libavcodec 54.
 //
-// The XDK's own decoder is XMV, which is WMV9 and VC-1, and no server can
-// transcode into that, so the console decodes in software.
+// Neither XDK has an H.264 decoder. The 360's is XMV, which is WMV9 and VC-1,
+// and no server can transcode into that, so both consoles decode in software.
 //
 // Separate from the desktop decoder rather than sharing it behind version
 // guards: this API predates avcodec_send_packet, av_frame_alloc and
@@ -16,11 +16,47 @@
 extern "C" {
 #include "libavcodec/avcodec.h"
 #include "libavutil/imgutils.h"
+#include "libavutil/cpu.h"
 }
 
+#include <cstdarg>
+#include <cstdio>
 #include <cstring>
+#include <vector>
 
 namespace {
+
+// libavcodec is built cdecl while the rest of this target defaults to stdcall,
+// so the callback has to say so or the stack unwinds wrong on the first call.
+#if defined(_XBOX) && !defined(_XENON)
+  #define BJ_AVLOG_CALL __cdecl
+#else
+  #define BJ_AVLOG_CALL
+#endif
+
+int g_avLogCount = 0;
+
+void BJ_AVLOG_CALL AvLogToConsole(void* avcl, int level, const char* fmt, va_list args)
+{
+    (void)avcl;
+    if (level > AV_LOG_WARNING) return;
+
+    // Corrupt video makes the decoder complain once per slice, which would
+    // bury everything else. The first few hundred say what is wrong.
+    if (g_avLogCount >= 300) return;
+    ++g_avLogCount;
+
+    char text[256];
+    std::vsnprintf(text, sizeof(text), fmt, args);
+
+    size_t length = std::strlen(text);
+    while (length > 0 && (text[length - 1] == '\n' || text[length - 1] == '\r')) {
+        text[--length] = '\0';
+    }
+    if (length == 0) return;
+
+    LOGF("[lavc] %s", text);
+}
 
 class Ffmpeg1Decoder final : public VideoDecoder {
 public:
@@ -31,6 +67,9 @@ public:
         (void)maxWidth;
         (void)maxHeight;
 
+        av_log_set_level(AV_LOG_WARNING);
+        av_log_set_callback(AvLogToConsole);
+
         avcodec_register_all();
 
         // Not const in this version.
@@ -40,6 +79,7 @@ public:
         context_ = avcodec_alloc_context3(codec);
         if (!context_) { error = "could not allocate a decoder context"; return false; }
 
+#if defined(_XENON)
         // One thread per hardware thread of cores 1 and 2, which is where
         // OXDK's pinning puts them. Core 0 is left to the main thread.
         //
@@ -47,6 +87,11 @@ public:
         // adds does not matter behind a frame queue.
         context_->thread_count = 4;
         context_->thread_type  = FF_THREAD_FRAME;
+#else
+        // The original Xbox has one core, so more threads would only add
+        // latency and per-thread frame buffers.
+        context_->thread_count = 1;
+#endif
 
         // Access units arrive whole from the demuxer, so no parser is needed.
         if (avcodec_open2(context_, codec, nullptr) < 0) {
@@ -58,6 +103,9 @@ public:
         frame_ = avcodec_alloc_frame();
         if (!frame_) { error = "out of memory"; close(); return false; }
 
+#if defined(_XBOX) && !defined(_XENON)
+        LOGF("[video] cpu flags 0x%x", av_get_cpu_flags());
+#endif
         LOGF("[video] %s, software H.264", name());
         return true;
     }
@@ -77,9 +125,21 @@ public:
     {
         if (!context_ || !annexB || length == 0) return false;
 
+        // libavcodec's bitstream readers fetch 32 or 64 bits at a time and
+        // are allowed to run past the end, so the input has to carry
+        // FF_INPUT_BUFFER_PADDING_SIZE zero bytes after it. Handing over the
+        // demuxer's buffer directly read whatever followed it on the heap,
+        // and the hand written assembly reads further ahead than the C does,
+        // so turning on SIMD made a latent bug visible. The zeroes matter as
+        // much as the room: the header warns that non-zero padding lets a
+        // damaged stream overread.
+        input_.resize(length + FF_INPUT_BUFFER_PADDING_SIZE);
+        std::memcpy(input_.data(), annexB, length);
+        std::memset(input_.data() + length, 0, FF_INPUT_BUFFER_PADDING_SIZE);
+
         AVPacket packet;
         av_init_packet(&packet);
-        packet.data = const_cast<uint8_t*>(annexB);
+        packet.data = input_.data();
         packet.size = (int)length;
         packet.pts  = pts;
 
@@ -176,13 +236,14 @@ private:
     }
 
     Nv12Frame       scratch_;   // reused, so repacking costs no allocation
+    std::vector<uint8_t> input_; // reused, padded for the bitstream reader
     AVCodecContext* context_ = nullptr;
     AVFrame*        frame_   = nullptr;
 };
 
 }  // namespace
 
-std::unique_ptr<VideoDecoder> VideoDecoder::Create()
+std::unique_ptr<VideoDecoder> BJ_DECODER_CALL VideoDecoder::Create()
 {
     return std::unique_ptr<VideoDecoder>(new Ffmpeg1Decoder());
 }

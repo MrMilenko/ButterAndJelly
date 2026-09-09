@@ -32,7 +32,18 @@ FFMPEG_SRCS := $(filter-out %_template.c,$(FFMPEG_SRCS))
 # for "internal.h" gets its neighbour rather than libavutil's, so INT_BIT and
 # friends never arrive. Upstream avoids it by include order; this is the same
 # thing said explicitly.
-FFMPEG_BUILD_FLAGS := -DHAVE_AV_CONFIG_H -I$(FFMPEG_DIR) -Ithird_party/xdkcompat \
+# -fno-strict-aliasing because this tree type-puns freely.
+# ffmpeg is cdecl throughout while the rest of the program is stdcall. Only
+# VideoDecoder::Create crosses back, and it declares the convention itself.
+ifeq ($(OXDK_TARGET),xbox)
+FFMPEG_ABI_FLAGS := -Xclang -fdefault-calling-conv=cdecl
+endif
+
+# -fgnu89-inline: av_extern_inline is a plain inline, which emits nothing
+# under C99.
+FFMPEG_BUILD_FLAGS := -DHAVE_AV_CONFIG_H -fno-strict-aliasing -fgnu89-inline \
+                      $(FFMPEG_ABI_FLAGS) \
+                      -I$(FFMPEG_DIR) -Ithird_party/xdkcompat \
                       -include $(FFMPEG_DIR)/libavutil/intmath.h \
                       -include $(FFMPEG_DIR)/libavutil/internal.h \
                       -include $(FFMPEG_DIR)/config.h

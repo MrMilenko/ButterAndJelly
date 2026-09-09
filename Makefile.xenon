@@ -3,38 +3,10 @@
 #   make -f Makefile.xenon                       build default.xex
 #   XBDM_HOST=192.168.x.x make -f Makefile.xenon run
 #
-# The same tree as the Wii U build. The core (HLS, the TS demuxer, the Jellyfin
-# client, JSON, settings) is endian clean and already runs big endian on a
-# PowerPC, so it carries over as source; what changes is underneath it.
-#
-# What is not here yet, and what each one costs:
-#
-#   SDL_ttf     no 360 build exists. FreeType is pure C with no OS coupling
-#               beyond malloc and file IO, so this is a port, not a rewrite.
-#   SDL_image   likewise. Only JPEG and PNG are wanted (Jellyfin artwork), so
-#               stb_image would remove the dependency outright on both consoles.
-#   libcurl     the XDK has Berkeley sockets through xnet, and every Jellyfin
-#               call here is plain HTTP/1.1. TLS is the part that needs a real
-#               port, and only for servers reached over HTTPS.
-#   mpg123      MP3, which the server transcodes to. minimp3 is a single header
-#               and would suit both consoles better than mpg123 does.
-#
-# One thing above all of those: OXDK's libc++ is built with _LIBCPP_HAS_THREADS 0,
-# because libc++'s Win32 thread backend wants fiber-local storage (FlsAlloc) that
-# this console has no header for. So std::thread, std::mutex and
-# std::condition_variable do not exist here, and this client is threaded
-# throughout: the player runs separate download and decode threads, and
-# worker.cpp, log.cpp and video_frame.cpp all take locks. SDL2x360 does have
-# threads (SDL_systhread, SDL_sysmutex, SDL_syscond_cv, SDL_syssem, all on the
-# XDK), and SDL is a dependency on every platform already, so the way through is
-# a small threading layer in src/core over SDL rather than std::thread.
-#
-# Video is stubbed deliberately; src/platform/xenon/video_decoder_xenon.cpp says
-# why. Note also that SDL's YUV path here hands D3D9 the PC ps_2_0 blobs SDL
-# ships, which are not Xenos microcode, so it disables itself at renderer
-# creation. The base textured quad path (x360shaders) is the one that works.
+# Same tree as the Wii U build. src/core and src/ui carry over as source; what
+# changes is underneath them. This console has no SDL_ttf, SDL_image, libcurl
+# or mpg123, so it uses stb_truetype, stb_image, sockets and minimp3 instead.
 
-# OXDK is a submodule of this repository. Set OXDK_DIR to use one elsewhere.
 OXDK_DIR    ?= third_party/OXDK
 OXDK_TARGET := xbox360
 XDK_DIR     ?= $(HOME)/xdk360-extract/sdk/XDK
@@ -86,7 +58,7 @@ APP_SRCS := \
     src/core/worker.cpp \
     src/platform/http_sockets.cpp \
     src/platform/xenon/platform_xenon.cpp \
-    src/platform/xenon/video_decoder_ffmpeg1.cpp \
+    src/platform/video_decoder_ffmpeg1.cpp \
     src/ui/app.cpp \
     src/ui/art_cache.cpp \
     src/ui/render.cpp \
@@ -142,7 +114,7 @@ $(FFMPEG_SRCS:.c=.o): CFLAGS += $(FFMPEG_BUILD_FLAGS)
 CORE_CHECK_SRCS := src/core/json.cpp src/core/ts_demux.cpp \
                    src/core/hls.cpp src/core/settings.cpp \
                    src/platform/xenon/platform_xenon.cpp \
-                   src/platform/xenon/video_decoder_ffmpeg1.cpp \
+                   src/platform/video_decoder_ffmpeg1.cpp \
                    third_party/cJSON/cJSON.c
 
 core-check:
@@ -178,11 +150,9 @@ deploy-assets: check-host
 	$(foreach f,$(ASSET_FILES),\
 	    $(XBDM) $(XBDM_HOST) deploy assets/$(f) '$(XEX_REMOTE_DIR)\$(subst /,\,$(f))' &&) true
 
-# UDP discovery finds nothing from this console yet, so a server can be named
-# outright instead. The client reads one URL per line from server.txt beside the
-# executable, at game:\server.txt, and lists it ahead of anything discovery
-# turned up. Beside the XEX rather than in the data directory because the data
-# directory is the title's own cache device, which XBDM cannot write to.
+# Names a server outright, for networks where broadcast discovery does not
+# reach. Written to game:\server.txt, which the client reads ahead of anything
+# discovery finds.
 #
 #   XBDM_HOST=... JELLYFIN=http://192.168.1.10:8096 make -f Makefile.xenon deploy-server
 deploy-server: check-host

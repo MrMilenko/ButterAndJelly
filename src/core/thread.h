@@ -17,7 +17,8 @@
 #include <functional>
 #include <utility>
 
-#if defined(_XENON)
+// Both Xboxes take the SDL path: neither has a usable libc++ thread backend.
+#if defined(_XBOX)
   #define BJ_STD_THREADS 0
 #else
   #define BJ_STD_THREADS 1

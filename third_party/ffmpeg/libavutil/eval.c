@@ -145,7 +145,7 @@ struct AVExpr {
     double value; // is sign in other types
     union {
         int const_index;
-        double (*func0)(double);
+        double (FF_CRT_CB *func0)(double);
         double (*func1)(void *, double);
         double (*func2)(void *, double, double);
     } a;
@@ -153,7 +153,7 @@ struct AVExpr {
     double *var;
 };
 
-static double etime(double v)
+static double FF_CRT_CB etime(double v)
 {
     return av_gettime() * 0.000001;
 }

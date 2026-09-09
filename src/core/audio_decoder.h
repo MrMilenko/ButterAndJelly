@@ -8,7 +8,8 @@
 
 #pragma once
 
-#if defined(_XENON)
+// Neither Xbox has an mpg123 build.
+#if defined(_XBOX)
   #define BJ_AUDIO_MPG123 0
 #else
   #define BJ_AUDIO_MPG123 1

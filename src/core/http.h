@@ -26,7 +26,15 @@ struct HttpResponse {
     std::string body;
     std::string error;    // transport-level failure, empty on success
 
-    bool ok() const { return status >= 200 && status < 300; }
+    // What the server said it would send, or -1 if it did not say.
+    long long   contentLength = -1;
+
+    // First byte of a 206, from Content-Range, or -1 when absent. A server
+    // may answer from somewhere other than where it was asked.
+    long long   rangeStart = -1;
+
+    // A body cut short still carries 200, so error matters as much as status.
+    bool ok() const { return status >= 200 && status < 300 && error.empty(); }
 };
 
 // Streaming sink: return false to abort the transfer (used to stop playback

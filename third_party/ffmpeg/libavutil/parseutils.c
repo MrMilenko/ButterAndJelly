@@ -327,7 +327,7 @@ static const ColorEntry color_table[] = {
     { "YellowGreen",          { 0x9A, 0xCD, 0x32 } },
 };
 
-static int color_table_compare(const void *lhs, const void *rhs)
+static int FF_CRT_CB color_table_compare(const void *lhs, const void *rhs)
 {
     return av_strcasecmp(lhs, ((const ColorEntry *)rhs)->name);
 }

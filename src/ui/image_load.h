@@ -14,7 +14,8 @@
 
 #include <SDL.h>
 
-#if defined(_XENON)
+// Neither Xbox has an SDL_image build.
+#if defined(_XBOX)
   #define BJ_IMAGE_SDL 0
 #else
   #define BJ_IMAGE_SDL 1

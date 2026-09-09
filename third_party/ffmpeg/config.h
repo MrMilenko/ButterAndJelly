@@ -39,7 +39,15 @@
 #else
 #define restrict
 #endif
+/* What the compiler puts in front of a C symbol, as seen from assembly.
+   i386 Windows uses a leading underscore, and ffmpeg's inline asm builds its
+   operand names with this. Empty here meant every MANGLE() asked the linker
+   for an undecorated name. */
+#if defined(_XBOX) && !defined(_XENON)
+#define EXTERN_PREFIX "_"
+#else
 #define EXTERN_PREFIX ""
+#endif
 #define EXTERN_ASM
 
 /* ============================================================
@@ -75,7 +83,11 @@
 #define ARCH_TILEGX 0
 #define ARCH_TILEPRO 0
 #define ARCH_TOMI 0
-#ifdef _XBOX
+/* The 360 is PowerPC and this tree carries no ppc SIMD, so it builds as
+   generic C. The original Xbox is x86 and now has libavcodec/x86 grafted in
+   from the same 54.92 release, so it gets the real thing. _XBOX is defined on
+   both consoles, so _XENON is tested first. */
+#if defined(_XENON) || defined(BJ_FFMPEG_NO_SIMD)
 #define ARCH_X86 0
 #define ARCH_X86_32 0
 #else
@@ -94,56 +106,42 @@
 #define HAVE_ARMV6 0
 #define HAVE_ARMV6T2 0
 #define HAVE_ARMVFP 0
-#define HAVE_AVX 0
 #define HAVE_FMA4 0
 #define HAVE_IWMMXT 0
 #define HAVE_MIPSFPU 0
 #define HAVE_MIPSDSPR1 0
 #define HAVE_MIPSDSPR2 0
 #define HAVE_MMI 0
-#define HAVE_MMX 0
-#define HAVE_MMXEXT 0
-#define HAVE_MMX2 0
 #define HAVE_NEON 0
 #define HAVE_PPC4XX 0
-#define HAVE_SSE 0
-#define HAVE_SSE2 0
 #define HAVE_SSE3 0
-#define HAVE_SSE4 0
 #define HAVE_SSE42 0
-#define HAVE_SSSE3 0
 #define HAVE_VFPV3 0
 #define HAVE_VIS 0
 #define HAVE_XMM_CLOBBERS 0
 
 /* Inline assembly / external assembly variants (all disabled for Xbox 360) */
-#define HAVE_AMD3DNOW_INLINE 0
 #define HAVE_ARMV5TE_EXTERNAL 0
 #define HAVE_ARMV5TE_INLINE 0
 #define HAVE_ARMV6_EXTERNAL 0
 #define HAVE_ARMV6_INLINE 0
-#define HAVE_AVX_EXTERNAL 0
-#define HAVE_MMX_EXTERNAL 0
-#define HAVE_MMX_INLINE 0
-#define HAVE_MMXEXT_EXTERNAL 0
-#define HAVE_MMXEXT_INLINE 0
 #define HAVE_NEON_INLINE 0
-#define HAVE_SSE_INLINE 0
-#define HAVE_SSE2_EXTERNAL 0
-#define HAVE_SSE2_INLINE 0
-#define HAVE_SSE4_EXTERNAL 0
-#define HAVE_SSSE3_EXTERNAL 0
-#define HAVE_SSSE3_INLINE 0
 
 /* ============================================================
  * Platform capabilities
- * Xbox 360 is Big Endian PowerPC with Xenon CPU
+ * _XBOX is defined on both consoles, so this keys on _XENON. Wrong here
+ * and h264.h packs every motion vector with its halves swapped.
  * ============================================================ */
+#ifdef _XENON
 #define HAVE_BIGENDIAN 1
 #define HAVE_FAST_64BIT 1
-#define HAVE_FAST_CLZ 1
-#define HAVE_FAST_CMOV 1
 #define HAVE_FAST_UNALIGNED 0
+#else
+#define HAVE_BIGENDIAN 0
+#define HAVE_FAST_64BIT 0
+#define HAVE_FAST_UNALIGNED 1
+#endif
+#define HAVE_FAST_CLZ 1
 
 /* Threading */
 #define HAVE_PTHREADS 0
@@ -177,8 +175,6 @@
 #define HAVE_DLOPEN 0
 #define HAVE_DOS_PATHS 1
 #define HAVE_DXVA_H 0
-#define HAVE_EBP_AVAILABLE 0
-#define HAVE_EBX_AVAILABLE 0
 #define HAVE_FCNTL 0
 #define HAVE_FORK 0
 #define HAVE_GETADDRINFO 0
@@ -196,7 +192,7 @@
 #define HAVE_GSM_H 0
 #define HAVE_IBM_ASM 0
 #define HAVE_INET_ATON 0
-#ifdef _XBOX
+#if defined(_XENON) || defined(BJ_FFMPEG_NO_SIMD)
 #define HAVE_INLINE_ASM 0
 #else
 #define HAVE_INLINE_ASM 1
@@ -274,9 +270,10 @@
 #define HAVE_WINDOWS_H 0
 #define HAVE_WINSOCK2_H 0
 #define HAVE_XFORM_ASM 0
-#ifdef _XBOX
+#if defined(_XENON) || defined(BJ_FFMPEG_NO_SIMD)
 #define HAVE_YASM 0
 #else
+/* nasm assembles the .asm files to win32 COFF; see mk/ffmpeg-x86.mk. */
 #define HAVE_YASM 1
 #endif
 
@@ -308,7 +305,6 @@
 
 /* Dynamic linking */
 #define HAVE_BSWAP 0
-#define HAVE_CMOV 0
 
 /* ============================================================
  * Library / Feature configuration
@@ -491,6 +487,73 @@
 #define CONFIG_H263_DECODER 0
 #define CONFIG_H263I_DECODER 0
 #define CONFIG_H263P_DECODER 0
+/* The Pentium III has MMX, MMXEXT and SSE, nothing later. Every form of a
+   set has to agree: dsputil.c reads HAVE_MMX, the H.264 inits read
+   HAVE_MMX_EXTERNAL, and a split between them half accelerates the
+   decoder. Nothing here is compiled for the 360. */
+#if !defined(_XENON) && !defined(BJ_FFMPEG_NO_SIMD)
+#define HAVE_MMX 1
+#define HAVE_MMXEXT 1
+#define HAVE_MMX2 1
+#define HAVE_SSE2 0
+#define HAVE_SSSE3 0
+#define HAVE_SSE4 0
+#define HAVE_MMX_INLINE 1
+#define HAVE_MMX_EXTERNAL 1
+#define HAVE_MMXEXT_INLINE 1
+#define HAVE_MMXEXT_EXTERNAL 1
+#define HAVE_SSE 1
+#define HAVE_SSE_INLINE 1
+#define HAVE_SSE_EXTERNAL 1
+/* A Pentium III has MMX, the integer SSE additions ffmpeg calls MMXEXT, and
+   single precision SSE. It has no SSE2 and never had 3DNow, which is AMD's.
+   Claiming them only pulls in code this CPU cannot execute. */
+#define HAVE_SSE2_INLINE 0
+#define HAVE_SSE2_EXTERNAL 0
+#define HAVE_SSSE3_INLINE 0
+#define HAVE_SSSE3_EXTERNAL 0
+#define HAVE_SSE4_EXTERNAL 0
+#define HAVE_AMD3DNOW_INLINE 0
+#define HAVE_AMD3DNOW_EXTERNAL 0
+#define HAVE_AMD3DNOWEXT_INLINE 0
+#define HAVE_AMD3DNOWEXT_EXTERNAL 0
+#define HAVE_CMOV 1
+#define HAVE_EBX_AVAILABLE 1
+#define HAVE_EBP_AVAILABLE 1
+#define HAVE_FAST_CMOV 0
+#define HAVE_AVX 0
+#define HAVE_AVX_EXTERNAL 0
+#else
+#define HAVE_MMX 0
+#define HAVE_MMXEXT 0
+#define HAVE_MMX2 0
+#define HAVE_SSE2 0
+#define HAVE_SSSE3 0
+#define HAVE_SSE4 0
+#define HAVE_MMX_INLINE 0
+#define HAVE_MMX_EXTERNAL 0
+#define HAVE_MMXEXT_INLINE 0
+#define HAVE_MMXEXT_EXTERNAL 0
+#define HAVE_SSE 0
+#define HAVE_SSE_INLINE 0
+#define HAVE_SSE_EXTERNAL 0
+#define HAVE_SSE2_INLINE 0
+#define HAVE_SSE2_EXTERNAL 0
+#define HAVE_SSSE3_INLINE 0
+#define HAVE_SSSE3_EXTERNAL 0
+#define HAVE_SSE4_EXTERNAL 0
+#define HAVE_AMD3DNOW_INLINE 0
+#define HAVE_AMD3DNOW_EXTERNAL 0
+#define HAVE_AMD3DNOWEXT_INLINE 0
+#define HAVE_AMD3DNOWEXT_EXTERNAL 0
+#define HAVE_CMOV 0
+#define HAVE_EBX_AVAILABLE 0
+#define HAVE_EBP_AVAILABLE 0
+#define HAVE_FAST_CMOV 0
+#define HAVE_AVX 0
+#define HAVE_AVX_EXTERNAL 0
+#endif
+
 #define CONFIG_H264_DECODER 1
 #define CONFIG_H264_CRYSTALHD_DECODER 0  /* Requires Broadcom CrystalHD hardware */
 #define CONFIG_H264_VDA_DECODER 0  /* Requires Apple VDA hardware */
@@ -1508,8 +1571,20 @@
 #define av_always_inline __forceinline
 #endif
 
-/* Endian byte swap for big-endian Xbox 360 */
-#ifdef _XBOX
+/* Comparators handed to the CRT's qsort and bsearch have to use the CRT's
+   calling convention. OXDK builds the original Xbox stdcall by default, and
+   the mismatch is silent at run time, so the few of them are marked. */
+#if defined(_XBOX) && !defined(_XENON)
+#define FF_CRT_CB __cdecl
+/* av_usleep calls Sleep and this tree does not include windows.h. */
+void __stdcall Sleep(unsigned long);
+#else
+#define FF_CRT_CB
+#endif
+
+/* Endian byte swap for big-endian Xbox 360. _XBOX is defined on the original
+   Xbox too, which is little-endian, so this keys on _XENON. */
+#ifdef _XENON
 #define AV_HAVE_BIGENDIAN 1
 #else
 #define AV_HAVE_BIGENDIAN 0

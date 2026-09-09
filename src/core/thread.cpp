@@ -33,7 +33,10 @@ void SleepMs(uint32_t ms)
 namespace {
 
 // The body outlives this call, so it goes on the heap and the thread owns it.
-int RunBody(void* data)
+//
+// SDLCALL, because OXDK compiles with stdcall as the default convention while
+// SDL_ThreadFunction is cdecl, and the two do not interchange.
+int SDLCALL RunBody(void* data)
 {
     std::function<void()>* body = (std::function<void()>*)data;
     if (body && *body) (*body)();

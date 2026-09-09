@@ -698,6 +698,25 @@ int JellyfinClient::VideoBitrateFor(int height)
     return bitrate;
 }
 
+// A height only cap lets a wide source come back as 884x480, a third more
+// pixels to decode for no more picture. _XENON is tested first: _XBOX is
+// defined on both Xboxes.
+#if defined(_XENON)
+constexpr int kMaxVideoWidth     = 0;   // 0 means send no cap
+constexpr int kMaxVideoFramerate = 0;
+#elif defined(_XBOX)
+constexpr int kMaxVideoWidth     = 640;
+constexpr int kMaxVideoFramerate = 30;
+#else
+constexpr int kMaxVideoWidth     = 0;
+constexpr int kMaxVideoFramerate = 0;
+#endif
+
+// Baseline is cheaper to decode, but asking for it pushed the server off its
+// hardware encoder, which cost more than it saved.
+constexpr const char* kForcedVideoProfile = nullptr;
+constexpr int         kForcedVideoLevel   = 0;
+
 std::string JellyfinClient::videoHlsUrl(const PlaybackPlan& plan, int maxHeight,
                                         int64_t startTicks) const
 {
@@ -711,7 +730,15 @@ std::string JellyfinClient::videoHlsUrl(const PlaybackPlan& plan, int maxHeight,
     }
     if (profile.empty()) profile = "high";
 
-    const int level = plan.videoLevel > 0 ? plan.videoLevel : 41;
+    int level = plan.videoLevel > 0 ? plan.videoLevel : 41;
+
+    // Following the source only makes sense while a stream copy is possible.
+    // This build forces a re-encode below, so the console asks for what it can
+    // decode instead of for what the file happens to be.
+    if (kForcedVideoProfile) {
+        profile = kForcedVideoProfile;
+        level   = kForcedVideoLevel;
+    }
 
     std::string url = serverUrl_ + "/Videos/" +
                       Http::UrlEncode(plan.mediaSourceId) + "/master.m3u8";
@@ -719,10 +746,25 @@ std::string JellyfinClient::videoHlsUrl(const PlaybackPlan& plan, int maxHeight,
     url += "&deviceId="      + Http::UrlEncode(deviceId_);
     url += "&api_key="       + Http::UrlEncode(accessToken_);
     url += "&playSessionId=" + Http::UrlEncode(plan.playSessionId);
+    // H.264 everywhere: MPEG-4 is cheaper to decode, but the server has no
+    // hardware encoder for it and the encode cost outweighs the saving.
+#if defined(BJ_VIDEO_CODEC_MPEG4)
+    // profile and level are H.264 spellings; the encoder rejects them here.
+    url += "&videoCodec=mpeg4";
+    (void)profile;
+    (void)level;
+#else
     url += "&videoCodec=h264";
     url += "&profile="       + Http::UrlEncode(profile);
     url += "&level="         + bj::ToString(level);
+#endif
     url += "&maxHeight="     + bj::ToString(maxHeight);
+    if (kMaxVideoWidth > 0) {
+        url += "&maxWidth=" + bj::ToString(kMaxVideoWidth);
+    }
+    if (kMaxVideoFramerate > 0) {
+        url += "&maxFramerate=" + bj::ToString(kMaxVideoFramerate);
+    }
     url += "&videoBitRate="  + bj::ToString(VideoBitrateFor(maxHeight));
     // MP3 rather than AAC: the console has an MP3 decoder available and no
     // AAC one, and the bitrate difference does not matter over a LAN.
@@ -730,14 +772,12 @@ std::string JellyfinClient::videoHlsUrl(const PlaybackPlan& plan, int maxHeight,
     url += "&maxAudioChannels=2";
     url += "&audioBitRate=192000";
     url += "&segmentContainer=ts";
+#if !defined(BJ_VIDEO_CODEC_MPEG4)
+    // Asking for AVC specifically would undo the codec choice above.
     url += "&requireAvc=true";
-    // Transcode rather than copy.
-    //
-    // Left to itself the server sees H.264 in, H.264 out and copies the
-    // stream untouched, which ignores maxHeight, so asking for 360p and
-    // getting the source's 720x480 is exactly what happened on the Xbox 360.
-    // A console decoding in software needs the smaller picture more than it
-    // needs the server's spare cycles.
+#endif
+    // Without this the server copies the stream untouched and ignores
+    // maxHeight.
     url += "&allowVideoStreamCopy=false";
     // And the switch that actually decides it: Jellyfin picks stream copy on
     // its own when the input already matches, and allowVideoStreamCopy alone

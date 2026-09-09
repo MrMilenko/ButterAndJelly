@@ -4,6 +4,7 @@
 #   scripts/build.sh              both consoles
 #   scripts/build.sh wiiu         Wii U only
 #   scripts/build.sh xenon        Xbox 360 only
+#   scripts/build.sh xbox         Original Xbox only
 #   scripts/build.sh clean        remove build output
 #
 # Requirements are checked before anything is built, and each one names what to
@@ -75,6 +76,40 @@ package_wiiu() {
     echo "  $OUT/butterandjelly-$VERSION-wiiu.zip"
 }
 
+check_xbox() {
+    [ -n "$OXDK_DIR" ] || OXDK_DIR=$ROOT/third_party/OXDK
+    [ -f "$OXDK_DIR/oxdk.mk" ] || die "OXDK not found at $OXDK_DIR.
+It is a submodule of this repository:
+  git submodule update --init
+Or clone it yourself and set OXDK_DIR:
+  git clone https://github.com/MrMilenko/OXDK"
+    have make || die "make is needed for the original Xbox build."
+    have nasm || die "nasm is needed for libavcodec's x86 assembly.
+Build without it using FFMPEG_SIMD=0, at about half the decode speed."
+    export OXDK_DIR
+    "$OXDK_DIR/scripts/doctor.sh" >/dev/null 2>&1 || true
+}
+
+build_xbox() {
+    check_xbox
+    echo "Building for the original Xbox"
+    make -f Makefile.xbox -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
+    package_xbox
+}
+
+package_xbox() {
+    stage=$OUT/butterandjelly-$VERSION-xbox
+    rm -rf "$stage"; mkdir -p "$stage/butterandjelly/fonts"
+    cp bin/default.xbe "$stage/butterandjelly/"
+    cp assets/fonts/*.ttf assets/fonts/OFL.txt "$stage/butterandjelly/fonts/"
+    sed -e "s/@VERSION@/$VERSION/" packaging/README.xbox.txt > "$stage/README.txt"
+    cp packaging/server.txt.example "$stage/butterandjelly/"
+    (cd "$OUT" && rm -f "butterandjelly-$VERSION-xbox.zip" &&
+     zip -qr "butterandjelly-$VERSION-xbox.zip" "butterandjelly-$VERSION-xbox")
+    rm -rf "$stage"
+    echo "  $OUT/butterandjelly-$VERSION-xbox.zip"
+}
+
 build_xenon() {
     check_xenon
     echo "Building for the Xbox 360"
@@ -98,7 +133,8 @@ package_xenon() {
 case "${1:-all}" in
     wiiu)   build_wiiu ;;
     xenon|xbox360|360) build_xenon ;;
-    clean)  rm -rf build dist default.xex; find src third_party -name '*.o' -delete 2>/dev/null || true; echo "cleaned" ;;
-    all)    build_wiiu; build_xenon ;;
-    *)      die "usage: build.sh [wiiu|xenon|clean|all]" ;;
+    xbox|ogxbox) build_xbox ;;
+    clean)  rm -rf build dist bin default.xex; find src third_party -name '*.o' -delete 2>/dev/null || true; echo "cleaned" ;;
+    all)    build_wiiu; build_xenon; build_xbox ;;
+    *)      die "usage: build.sh [wiiu|xenon|xbox|clean|all]" ;;
 esac

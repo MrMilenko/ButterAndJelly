@@ -130,7 +130,7 @@ typedef struct {
     uint32_t code;
 } VLCcode;
 
-static int compare_vlcspec(const void *a, const void *b)
+static int FF_CRT_CB compare_vlcspec(const void *a, const void *b)
 {
     const VLCcode *sa=a, *sb=b;
     return (sa->code >> 1) - (sb->code >> 1);

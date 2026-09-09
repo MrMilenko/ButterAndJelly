@@ -52,6 +52,17 @@
 #elif defined(__GNUC__)
     #define DECLARE_ALIGNED(n,t,v)      t __attribute__ ((aligned (n))) v
     #define DECLARE_ASM_CONST(n,t,v)    static const t av_used __attribute__ ((aligned (n))) v
+#elif defined(__clang__)
+    /* clang targeting MSVC defines _MSC_VER but not __GNUC__, so it would take
+       the branch below and lose av_used. These tables are static and referred
+       to only from inline assembly, which the optimiser cannot see, so without
+       it they are discarded and the assembly fails to link. */
+    #define DECLARE_ALIGNED(n,t,v)      t __attribute__ ((aligned (n))) v
+    /* Not static, following the Intel branch above. These tables are reached
+       only from inline assembly, and a file scope static that nothing visible
+       touches gets dropped no matter what av_used says. External linkage is
+       what actually keeps them. */
+    #define DECLARE_ASM_CONST(n,t,v)    const t av_used __attribute__ ((aligned (n))) v
 #elif defined(_MSC_VER)
     #define DECLARE_ALIGNED(n,t,v)      __declspec(align(n)) t v
     #define DECLARE_ASM_CONST(n,t,v)    __declspec(align(n)) static const t v

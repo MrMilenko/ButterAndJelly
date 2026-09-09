@@ -26,12 +26,13 @@ constexpr Color TextDim    { 0x93, 0x98, 0xA8 };
 constexpr Color Accent     { 0x8B, 0x5C, 0xF6 };   // Jellyfin's purple
 constexpr Color AccentWarm { 0x00, 0xA4, 0xDC };   // and its blue
 
-// The console's own colour, used for its name in the title. Nintendo's blue
-// on a Wii U, Xbox green on a 360.
+// The console's own colour, used for its name in the title.
 #if defined(__WIIU__)
-constexpr Color Platform   { 0x00, 0xA4, 0xDC };
+constexpr Color Platform   { 0x00, 0xA4, 0xDC };   // Nintendo blue
 #elif defined(_XENON)
-constexpr Color Platform   { 0x52, 0xB0, 0x43 };
+constexpr Color Platform   { 0x52, 0xB0, 0x43 };   // Xbox 360 green
+#elif defined(_XBOX)
+constexpr Color Platform   { 0x9B, 0xC8, 0x00 };   // original Xbox green
 #else
 constexpr Color Platform   { 0x93, 0x98, 0xA8 };
 #endif

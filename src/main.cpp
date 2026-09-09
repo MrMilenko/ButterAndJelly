@@ -141,10 +141,8 @@ extern "C" int main(int argc, char** argv)
          settings.display == Settings::Display::TvOnly ? "TV only"
        : settings.display == Settings::Display::GamepadOnly ? "GamePad only"
        : "TV and GamePad");
-#elif defined(_XENON)
-    // One screen, and it is a television. SDL2x360 caps the mode at 720p
-    // whatever the dashboard is outputting, because a 1080i back buffer plus
-    // depth does not fit in the console's 10 MB of EDRAM.
+#elif defined(_XBOX)
+    // One screen, and it is a television.
     const Uint32 windowFlags = SDL_WINDOW_FULLSCREEN;
 #else
     const Uint32 windowFlags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
@@ -179,13 +177,9 @@ extern "C" int main(int argc, char** argv)
     // another, and point sampling shows it.
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
 
-    // No logical size on the Xbox 360. The console already outputs 1280x720,
-    // which is what everything above is laid out for, so it would be a scale
-    // of exactly one, and the interface reads the renderer's output size
-    // instead (see App::init). Both were turned off while chasing a texture
-    // fault that turned out to be elsewhere; this one stays off because it
-    // genuinely buys nothing here.
-#if !defined(_XENON)
+    // Neither Xbox sets one: the interface lays itself out to the renderer's
+    // output size instead, so scaling twice would only cost sharpness.
+#if !defined(_XBOX)
     SDL_RenderSetLogicalSize(renderer, kLogicalWidth, kLogicalHeight);
 #endif
 

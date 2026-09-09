@@ -15,25 +15,19 @@
 
 namespace {
 
-// The frame queue is sized by memory, not by a frame count.
-//
-// Forty frames was chosen at 480p, where it costs 29MB. The same count at
-// 720p is 53MB, and the pool of retired frames can hold as many again, which
-// is 100MB of decoded video on top of the decoder's own 37MB. Segments are
-// buffered separately and cover the network, so the frame queue only has to
-// smooth out decoding.
+// Sized by memory, not by a frame count: forty 720p frames plus the retired
+// pool would be 100MB on top of the decoder's own.
 constexpr size_t kFrameQueueBytes = 20u * 1024 * 1024;
 constexpr size_t kMinQueuedFrames = 12;
 constexpr size_t kMaxQueuedFrames = 40;
 
-// Enough buffered before the clock starts to survive a stutter, and more
-// than the stream's reordering depth, since frames arrive in decode order
-// and are sorted into place as they come.
+// More than the stream's reordering depth.
 constexpr size_t kMinFramesBeforeStart = 8;
 
-// Whole segments held between the downloader and the decoder. Segments run
-// about ten seconds, so this is nearly a minute of slack against the network.
-constexpr size_t kMaxBufferedSegments = 5;
+// Whole segments held between the downloader and the decoder. Jellyfin's run
+// three seconds each, and the server's transcode rate swings widely, so this
+// is a minute of cover at about 12MB.
+constexpr size_t kMaxBufferedSegments = 20;
 
 
 constexpr int64_t kTimescale = 90000;   // MPEG-TS PTS units per second
@@ -175,8 +169,18 @@ void Player::downloadThread(JellyfinClient* client, std::string itemId,
     const std::string masterUrl = client->videoHlsUrl(plan, maxHeight);
     if (masterUrl.empty()) { setFailed("Could not build a stream URL"); return; }
 
+    // The server starts the transcode to build this playlist, so the first
+    // attempt can outlast the request deadline.
     HlsPlaylist playlist;
-    if (!playlist.load(masterUrl, error)) { setFailed(error); return; }
+    bool loaded = false;
+    for (int attempt = 0; attempt < 4 && !stopping_; ++attempt) {
+        if (playlist.load(masterUrl, error)) { loaded = true; break; }
+        LOGF("[hls] playlist attempt %d failed (%s), retrying",
+             attempt + 1, error.c_str());
+        bj::SleepMs(1000 * (attempt + 1));
+    }
+    if (stopping_) return;
+    if (!loaded) { setFailed(error); return; }
     duration_ = playlist.totalDuration();
 
     // Seek by choosing a segment rather than with startTimeTicks: the server
@@ -214,7 +218,13 @@ void Player::downloadThread(JellyfinClient* client, std::string itemId,
         uint64_t fetchMs = 0;
 
         for (int attempt = 0; attempt < 4 && !stopping_; ++attempt) {
-            data.clear();
+            const size_t have = data.size();
+            HttpHeaders headers;
+            if (have > 0) {
+                headers.push_back({ "Range",
+                                    "bytes=" + bj::ToString((long)have) + "-" });
+            }
+
             const uint64_t fetchStart = Platform::NowMs();
             response = Http::GetStreaming(
                 segment.url,
@@ -222,16 +232,42 @@ void Player::downloadThread(JellyfinClient* client, std::string itemId,
                     if (stopping_) return false;
                     data.insert(data.end(), bytes, bytes + length);
                     return true;
-                });
+                },
+                headers);
             fetchMs = Platform::NowMs() - fetchStart;
+
+            // A 206 that starts elsewhere would splice the wrong bytes in.
+            if (have > 0 && response.status == 206 &&
+                response.rangeStart >= 0 && response.rangeStart != (long long)have) {
+                LOGF("[net] segment %lu resumed at %ld, asked for %lu: starting over",
+                     (unsigned long)index, (long)response.rangeStart,
+                     (unsigned long)have);
+                data.clear();
+                continue;
+            }
+
+            // A server ignoring Range answers 200 with the whole file, so
+            // the prefix is stale. Only drop it when the body really is a
+            // whole file, or a short one leaves nothing behind.
+            if (have > 0 && response.status == 200) {
+                const size_t got = data.size() - have;
+                if (response.contentLength > 0 &&
+                    (long long)got >= response.contentLength) {
+                    data.erase(data.begin(), data.begin() + have);
+                } else {
+                    data.resize(have);
+                }
+            }
 
             if (stopping_) break;
             if (response.ok() && !data.empty()) break;
 
-            LOGF("[net] segment %lu attempt %d failed (status %ld), retrying",
-                 (unsigned long)index, attempt + 1, response.status);
-            // Back off a little, mostly to give a transcode time to catch up.
-            bj::SleepMs(300 * (attempt + 1));
+            LOGF("[net] segment %lu attempt %d failed (status %ld): %s",
+                 (unsigned long)index, attempt + 1, response.status,
+                 response.error.c_str());
+            // Seconds, not milliseconds: the segment is still being written,
+            // and the queue holds a minute, so waiting costs nothing.
+            bj::SleepMs(1000 * (attempt + 1));
         }
 
         // The server serves segments at many times realtime, so if fetching
@@ -247,9 +283,21 @@ void Player::downloadThread(JellyfinClient* client, std::string itemId,
         }
 
         if (stopping_) break;
-        if (!response.ok() || data.empty()) {
-            LOGF("[player] segment %lu failed after retries (status %ld)",
-                 (unsigned long)index, response.status);
+        // A segment a couple of percent short loses a slice and the demuxer
+        // carries on. One half missing is worse than a pause.
+        const bool nearlyComplete =
+            !data.empty() && response.contentLength > 0 &&
+            (long long)data.size() * 100 >= response.contentLength * 95;
+        if (!response.ok() && nearlyComplete) {
+            LOGF("[player] segment %lu %lu of %ld bytes after retries, using it",
+                 (unsigned long)index, (unsigned long)data.size(),
+                 (long)response.contentLength);
+        } else if (!response.ok() || data.empty() ||
+                   (response.contentLength > 0 &&
+                    (long long)data.size() * 2 < response.contentLength)) {
+            LOGF("[player] segment %lu failed after retries: %lu of %ld bytes (status %ld)",
+                 (unsigned long)index, (unsigned long)data.size(),
+                 (long)response.contentLength, response.status);
             setFailed("The stream stopped unexpectedly");
             break;
         }
@@ -278,6 +326,7 @@ void Player::decodeThread()
     state_ = State::Buffering;
 
     TsDemuxer demux;
+    uint64_t lastPacketsDropped = 0;
     auto onFrame = [this](const Nv12View& view) {
         decoded_.fetch_add(1);
 
@@ -380,6 +429,16 @@ void Player::decodeThread()
         segmentSpaceCv_.notifyOne();
 
         demux.feed(segment.data(), segment.size(), onSample);
+
+        // Lost transport packets cost whole slices, which the decoder
+        // conceals as blocks of flat colour.
+        const uint64_t droppedNow = demux.packetsDropped();
+        if (droppedNow != lastPacketsDropped) {
+            LOGF("[demux] %lu transport packet(s) dropped (%lu total)",
+                 (unsigned long)(droppedNow - lastPacketsDropped),
+                 (unsigned long)droppedNow);
+            lastPacketsDropped = droppedNow;
+        }
 
         if (!tablesReported_ && demux.tablesReady()) {
             tablesReported_ = true;

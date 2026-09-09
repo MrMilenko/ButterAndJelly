@@ -16,6 +16,7 @@ enum : uint8_t {
     kStreamTypeMpeg1Audio = 0x03,
     kStreamTypeMpeg2Audio = 0x04,
     kStreamTypeAac        = 0x0F,
+    kStreamTypeMpeg4Part2 = 0x10,
     kStreamTypeH264       = 0x1B,
     kStreamTypeAc3        = 0x81,
 };

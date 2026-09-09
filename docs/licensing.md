@@ -22,7 +22,7 @@ Noto Sans under `assets/fonts` is SIL OFL; the text ships beside it.
 ## Binaries
 
 A release binary is a GPL work: recipients are entitled to the corresponding
-source, which is this repository at the commit it was built from. The Xbox 360
-binary statically links LGPL FFmpeg, which the same source satisfies.
+source, which is this repository at the commit it was built from. Both Xbox
+binaries statically link LGPL FFmpeg, which the same source satisfies.
 
-Neither console's SDK is included and neither is ours to give.
+No console SDK is included and none of them are ours to give.

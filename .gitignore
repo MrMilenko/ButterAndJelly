@@ -14,3 +14,7 @@ default.xex
 
 # Local settings and caches
 data/
+
+# Build output
+bin/
+build-wiiu/

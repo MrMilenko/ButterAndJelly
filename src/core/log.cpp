@@ -8,10 +8,8 @@
 #include <cstdio>
 #include <string>
 
-#if defined(_XENON)
-  // stderr goes nowhere on this console. XBDM's debug channel is where a log
-  // line can actually be read while the thing being logged is on screen --
-  // "make -f Makefile.xenon watch" on the host.
+// stderr goes nowhere on either Xbox.
+#if defined(_XBOX)
   #include <xtl.h>
 #endif
 
@@ -53,7 +51,7 @@ void Write(const char* fmt, ...)
     va_end(args);
 
     bj::ScopedLock lock(g_mutex);
-#if defined(_XENON)
+#if defined(_XBOX)
     {
         char line[544];
         std::snprintf(line, sizeof(line), "%s\r\n", buffer);

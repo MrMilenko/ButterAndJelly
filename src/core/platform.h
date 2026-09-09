@@ -1,27 +1,21 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 // platform.h: the small set of host services the portable code needs.
-//
-// Implemented twice: platform/desktop/platform_desktop.cpp writes under the
-// user's application-support directory, platform/wiiu/platform_wiiu.cpp
-// writes to the SD card next to the bundle.
 
 #pragma once
 
 #include <cstdint>
 #include <string>
 
-// The project is Butter and Jelly. Each console it runs on puts its own name
-// in front, so a Wii U build is WiiU Butter and Jelly and an Xbox 360 build
-// is Xenon Butter and Jelly. The name appears in the title bar, in the
-// about screen, and in Jellyfin's device list, which is worth keeping
-// distinct when a household has more than one console signed in.
 #if defined(__WIIU__)
   #define BJ_PLATFORM_NAME "WiiU"
   #define BJ_PLATFORM_LONG "Wii U"
 #elif defined(_XENON)
   #define BJ_PLATFORM_NAME "Xenon"
   #define BJ_PLATFORM_LONG "Xbox 360"
+#elif defined(_XBOX)
+  #define BJ_PLATFORM_NAME "Midway"
+  #define BJ_PLATFORM_LONG "Xbox"
 #else
   #define BJ_PLATFORM_NAME "Desktop"
   #define BJ_PLATFORM_LONG "desktop"
@@ -74,6 +68,10 @@ uint32_t LocalIPv4();
 // second, or 0 when there is no reason to think it is a constraint.
 //
 // Only the Xbox 360 answers with anything: its built-in wireless measures
+#if defined(_XBOX) && !defined(_XENON)
+void LogMemory(const char* when);
+#endif
+
 // around 3.5 Mbit/s in practice, which is less than a 720p transcode was
 // being asked for, and the difference showed up as playback stalling every
 // few seconds on high bitrate films while the decoder sat idle.

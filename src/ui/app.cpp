@@ -19,13 +19,21 @@ constexpr int kTopBarHeight = 74;
 constexpr int kHintBarHeight = 56;
 constexpr int kGridColumns  = 4;
 
-// How a decoded frame reaches the screen. The Xbox 360 uploads YUV planes and
-// lets SDL's pixel shader convert; everywhere else the CPU converts to RGB.
+// How a decoded frame reaches the screen. _XENON is tested first: _XBOX is
+// defined on both Xboxes and they take different paths here.
 #if defined(_XENON)
 constexpr Uint32     kVideoYuvFormat  = SDL_PIXELFORMAT_IYUV;
 constexpr bool       kPreferYuvUpload = true;
 constexpr Uint32     kVideoRgbFormat  = SDL_PIXELFORMAT_ARGB8888;
 constexpr PixelOrder kVideoPixelOrder = PixelOrder::Argb;
+#elif defined(_XBOX)
+// YUY2, converted by the NV2A while sampling. Packing costs a byte shuffle
+// instead of a colour conversion and halves the upload. See PackNv12ToYuy2.
+#define BJ_VIDEO_YUY2 1
+constexpr Uint32     kVideoYuvFormat  = SDL_PIXELFORMAT_IYUV;
+constexpr bool       kPreferYuvUpload = false;
+constexpr Uint32     kVideoRgbFormat  = SDL_PIXELFORMAT_YUY2;
+constexpr PixelOrder kVideoPixelOrder = PixelOrder::Bgra;
 #else
 constexpr Uint32     kVideoYuvFormat  = SDL_PIXELFORMAT_IYUV;
 constexpr bool       kPreferYuvUpload = false;
@@ -33,11 +41,9 @@ constexpr Uint32     kVideoRgbFormat  = SDL_PIXELFORMAT_RGBA32;
 constexpr PixelOrder kVideoPixelOrder = PixelOrder::Rgba;
 #endif
 
-// Whether this renderer will really take YUV, as opposed to accepting the
-// texture and quietly converting every frame on the CPU behind our backs --
-// which is what SDL does for a format the renderer does not list, and would
-// be slower than converting it ourselves. On the 360 it comes down to whether
-// the three YUV shaders compiled at startup.
+// Whether the renderer really takes YUV. SDL accepts a format it does not
+// list and converts every frame on the CPU instead, which is slower than
+// doing it here.
 bool RendererTakesYuv(SDL_Renderer* renderer)
 {
     SDL_RendererInfo info;
@@ -49,12 +55,14 @@ bool RendererTakesYuv(SDL_Renderer* renderer)
 }
 
 // Playback height requested from the server. The Wii U converts colour on the
-// CPU and cannot hold 720p in the frame budget; the Xbox 360 converts on the
-// GPU and can.
+// CPU and cannot hold 720p in the frame budget; the 360 converts on the GPU
+// and can. _XENON is tested first: _XBOX is defined on both Xboxes.
 #if defined(__WIIU__)
 constexpr int kPlaybackMaxHeight = 480;
 #elif defined(_XENON)
 constexpr int kPlaybackMaxHeight = 720;
+#elif defined(_XBOX)
+constexpr int kPlaybackMaxHeight = 480;
 #else
 constexpr int kPlaybackMaxHeight = 720;
 #endif
@@ -568,6 +576,15 @@ void App::loadLibraryItems(int sidebarIndex)
     }
     const int requestId = ++itemsRequestId_;
 
+    std::map<std::string, std::vector<JfItem>>::const_iterator hit =
+        itemsCache_.find(library.id);
+    if (hit != itemsCache_.end()) {
+        items_        = hit->second;
+        itemsLoading_ = false;
+        errorLine_.clear();
+        return;
+    }
+
     pool_.submit([this, library, requestId] {
         JfQuery q;
         q.parentId         = library.id;
@@ -581,17 +598,22 @@ void App::loadLibraryItems(int sidebarIndex)
         LOGF("[library] %s: %lu item(s)%s%s", library.name.c_str(),
              (unsigned long)fetched.size(),
              error.empty() ? "" : " - ", error.c_str());
-        pool_.post([this, fetched, error, requestId] {
+        const std::string libraryId = library.id;
+        pool_.post([this, fetched, error, requestId, libraryId] {
             // The user moved on before this landed; drop it.
             if (requestId != itemsRequestId_) return;
 
             items_        = fetched;
             itemIndex_    = 0;
             gridScrollPx_ = 0.0f;
-    gridScrollTargetPx_ = 0.0f;
+            gridScrollTargetPx_ = 0.0f;
             itemsLoading_ = false;
-            if (fetched.empty() && !error.empty()) errorLine_ = error;
-            else                                    errorLine_.clear();
+            if (fetched.empty() && !error.empty()) {
+                errorLine_ = error;
+            } else {
+                errorLine_.clear();
+                if (!fetched.empty()) itemsCache_[libraryId] = fetched;
+            }
         });
     });
 }
@@ -757,7 +779,9 @@ void App::startPlayback(const JfItem& item, bool fromStart)
     }
 
     std::string error;
-    if (!player_->open(client_, item.id, settings_.playbackHeight, startSeconds, error)) {
+    const int height = settings_.playbackHeight < kPlaybackMaxHeight
+                     ? settings_.playbackHeight : kPlaybackMaxHeight;
+    if (!player_->open(client_, item.id, height, startSeconds, error)) {
         toast(error.empty() ? "Could not start playback" : error);
         player_.reset();
         return;
@@ -776,8 +800,10 @@ void App::startPlayback(const JfItem& item, bool fromStart)
     statLastLogMs_ = 0;
     lastProgressReportMs_ = Platform::NowMs();
     client_.reportPlaybackStart(item.id);
-    LOGF("[player] opening %s at up to %dp", item.name.c_str(),
-         settings_.playbackHeight);
+    LOGF("[player] opening %s at up to %dp", item.name.c_str(), height);
+#if defined(_XBOX) && !defined(_XENON)
+    Platform::LogMemory("before playback");
+#endif
 }
 
 void App::stopPlayback()
@@ -970,10 +996,24 @@ bool App::updateVideoTexture()
         videoTextureIndex_ = 0;
         videoWidth_  = frame.width;
         videoHeight_ = frame.height;
+
+        // From SDL's own masks, not an assumption about endianness.
+        int bpp = 0;
+        Uint32 rMask = 0, gMask = 0, bMask = 0, aMask = 0;
+        if (!SDL_ISPIXELFORMAT_FOURCC(format) &&
+            SDL_PixelFormatEnumToMasks(format, &bpp, &rMask, &gMask, &bMask, &aMask)) {
+            videoBytes_ = PixelBytesFromMasks(rMask, gMask, bMask, aMask);
+            LOGF("[player] pixel bytes r=%d g=%d b=%d a=%d",
+                 videoBytes_.r, videoBytes_.g, videoBytes_.b, videoBytes_.a);
+        }
         LOGF("[player] %d video textures of %dx%d, %s",
              kVideoTextureCount, frame.width, frame.height,
              videoUploadsYuv_ ? "YUV planes, GPU converts"
+#if defined(BJ_VIDEO_YUY2)
+                              : "YUY2, GPU converts");
+#else
                               : "RGB, CPU converts");
+#endif
     }
 
     // Write to the next texture in the rotation, not the one on screen.
@@ -1009,13 +1049,21 @@ bool App::updateVideoTexture()
     // copy. Mapped texture memory is write-combined, which makes the
     // conversion's scattered byte writes much more expensive than the extra
     // bulk copy costs.
+#if defined(BJ_VIDEO_YUY2)
+    const int stagingStride = frame.width * 2;
+#else
     const int stagingStride = frame.width * 4;
+#endif
     const size_t stagingBytes = (size_t)stagingStride * frame.height;
     if (videoStaging_.size() != stagingBytes) videoStaging_.resize(stagingBytes);
 
     const uint64_t convertStart = Platform::NowMs();
+#if defined(BJ_VIDEO_YUY2)
+    PackNv12ToYuy2(frame, videoStaging_.data(), stagingStride);
+#else
     videoConverter_.convert(frame, videoStaging_.data(), stagingStride,
-                            ColorSpaceForHeight(frame.height), kVideoPixelOrder);
+                            ColorSpaceForHeight(frame.height), videoBytes_);
+#endif
     const uint64_t convertEnd = Platform::NowMs();
 
     void* pixels = nullptr;
@@ -1357,6 +1405,9 @@ void App::handleSettingsAction(Action action)
                     settings_.playbackHeight =
                         (settings_.playbackHeight == 720) ? 480
                       : (settings_.playbackHeight == 480) ? 360 : 720;
+                    if (settings_.playbackHeight > kPlaybackMaxHeight) {
+                        settings_.playbackHeight = kPlaybackMaxHeight;
+                    }
                     settings_.save();
                     toast("Playback quality: " +
                           bj::ToString(settings_.playbackHeight) + "p");

@@ -14,7 +14,8 @@
 
 #include "ui/palette.h"
 
-#if defined(_XENON)
+// Neither Xbox has an SDL_ttf build.
+#if defined(_XBOX)
   #define BJ_TEXT_SDL_TTF 0
 #else
   #define BJ_TEXT_SDL_TTF 1

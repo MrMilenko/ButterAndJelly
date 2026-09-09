@@ -63,14 +63,20 @@ struct Nv12Frame {
 // Rec.709 for high definition; picking the wrong one shifts every colour.
 enum class ColorSpace { Bt601, Bt709 };
 
-// Which order the four bytes of a pixel come out in.
-//
-// Rgba is what SDL calls RGBA32 and is what the Wii U and the desktop want.
-// Argb is SDL's ARGB8888 on a big-endian machine, and is the only format the
-// Xbox 360's renderer advertises. Handing it anything else makes SDL keep a
-// shadow texture and convert the whole frame on every unlock, which measured
-// at 88ms a frame against 3ms for a straight copy.
-enum class PixelOrder { Rgba, Argb };
+// Byte order within a pixel in memory, not the SDL format name: on a little
+// endian machine SDL_PIXELFORMAT_ARGB8888 is B,G,R,A. Prefer PixelBytes,
+// which asks SDL; this is for callers with no renderer to ask.
+enum class PixelOrder { Rgba, Argb, Bgra };
+
+// Where each channel's byte sits within a 32-bit pixel.
+struct PixelBytes {
+    int r = 0, g = 1, b = 2, a = 3;
+};
+
+// Turns a channel mask into the index of the byte it occupies: 0x00FF0000
+// is byte 2 on a little endian machine and byte 1 on a big endian one.
+PixelBytes PixelBytesFromMasks(uint32_t rMask, uint32_t gMask,
+                               uint32_t bMask, uint32_t aMask);
 
 // Picks the matrix the way every other player does: by frame height.
 inline ColorSpace ColorSpaceForHeight(int height)
@@ -88,6 +94,12 @@ void ConvertNv12ToRgba(const Nv12Frame& frame,
                        ColorSpace space,
                        PixelOrder order = PixelOrder::Rgba);
 
+// Packs a decoded frame into YUY2 for a texture unit that converts while
+// sampling. `destination` needs width * 2 bytes a row.
+void PackNv12ToYuy2(const Nv12Frame& frame,
+                    uint8_t* destination,
+                    int destinationStride);
+
 // The same conversion spread across persistent worker threads.
 //
 // Splitting the image three ways brings a 720p frame from 42ms down to 14ms
@@ -103,6 +115,10 @@ public:
 
     Nv12Converter(const Nv12Converter&) = delete;
     Nv12Converter& operator=(const Nv12Converter&) = delete;
+
+    // Explicit byte offsets, from the renderer's own masks.
+    void convert(const Nv12Frame& frame, uint8_t* destination,
+                 int destinationStride, ColorSpace space, PixelBytes bytes);
 
     void convert(const Nv12Frame& frame, uint8_t* destination,
                  int destinationStride, ColorSpace space,

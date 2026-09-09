@@ -1,6 +1,6 @@
 # Butter and Jelly
 
-A Jellyfin client for the Wii U and Xbox 360.
+A Jellyfin client for the Wii U, Xbox 360 and original Xbox.
 
 **Wii U**
 
@@ -16,17 +16,18 @@ The last one is the GamePad, which mirrors playback and can take it on its own.
 
 All captured from the consoles, not from an emulator.
 
-One codebase, two big endian PowerPC consoles. `src/core` and `src/ui` are
-shared; `src/platform` holds what differs.
+One codebase, three consoles: two big endian PowerPC and one little endian
+Pentium III. `src/core` and `src/ui` are shared; `src/platform` holds what
+differs.
 
 ## What works
 
-| | Wii U | Xbox 360 |
-| --- | --- | --- |
-| Browse libraries, search, resume | yes | yes |
-| Quick Connect sign in | yes | yes |
-| Video | up to 480p | up to 720p |
-| Poster artwork | yes | yes |
+| | Wii U | Xbox 360 | Xbox |
+| --- | --- | --- | --- |
+| Browse libraries, search, resume | yes | yes | yes |
+| Quick Connect sign in | yes | yes | yes |
+| Video | up to 480p | up to 720p | up to 480p |
+| Poster artwork | yes | yes | yes |
 
 ## Getting it
 
@@ -38,6 +39,9 @@ install notes inside.
 **Xbox 360.** A console that runs unsigned code. Copy `butterandjelly/` to the
 hard disk and launch `default.xex`. It writes settings and cached posters
 beside itself, so put it somewhere writable.
+
+**Xbox.** A modded console. Copy `butterandjelly/` to the hard disk and launch
+`default.xbe` from your dashboard. Same rule about somewhere writable.
 
 ## Server and sign in
 

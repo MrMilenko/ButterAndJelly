@@ -2,10 +2,9 @@
 
 // video_decoder.h: H.264 decoding, behind one interface.
 //
-// The console has a hardware decoder and the host does not, so there are two
-// implementations. Both take Annex-B access units and emit NV12, which means
-// everything downstream, colour conversion, timing and presentation, is
-// shared and can be tested on a laptop.
+// One implementation per platform: hardware on the Wii U, libavcodec on both
+// Xboxes and the desktop. All take Annex-B access units and emit NV12, so
+// everything downstream is shared and testable on a laptop.
 
 #pragma once
 
@@ -37,6 +36,13 @@ public:
 
     virtual const char* name() const = 0;
 
-    // Builds whichever implementation this platform has.
-    static std::unique_ptr<VideoDecoder> Create();
+    // Builds whichever implementation this platform has. The original Xbox
+    // builds libavcodec cdecl and everything else stdcall, and this is the
+    // only symbol crossing that line.
+#if defined(_XBOX) && !defined(_XENON)
+  #define BJ_DECODER_CALL __cdecl
+#else
+  #define BJ_DECODER_CALL
+#endif
+    static std::unique_ptr<VideoDecoder> BJ_DECODER_CALL Create();
 };

@@ -32,4 +32,4 @@ if grep -qiE '^ERROR:|fixRelocations failed' "$LOG"; then
 fi
 
 rm -f "$LOG"
-echo "built $(ls -lh "$BUILD_DIR"/butterjelly.wuhb | awk '{print $5}') at $(date +%H:%M:%S)"
+echo "built $(ls -lh "$BUILD_DIR"/butterandjelly.wuhb | awk '{print $5}') at $(date +%H:%M:%S)"

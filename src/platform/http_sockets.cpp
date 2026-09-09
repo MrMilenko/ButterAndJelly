@@ -20,7 +20,7 @@
 #include <string>
 #include <vector>
 
-#if defined(_XENON)
+#if defined(_XBOX)
   #include <xtl.h>
   #include <winsockx.h>
   using socket_t = SOCKET;
@@ -32,13 +32,12 @@
   #ifndef SO_ERROR
     #define SO_ERROR 0x1007
   #endif
-  // Undocumented, and the single thing that decides whether this console can
-  // talk to anything that is not an Xbox. XNET_STARTUP_BYPASS_SECURITY at
-  // startup is not enough: every socket has to be marked unencrypted too, or
-  // the stack accepts the call, encrypts the traffic and drops the replies.
-  // Every call still reports success, which is what makes it so hard to see.
-  // FreeStyle Dash calls it "patch our TCP/IP socket to run unencrypted".
-  #define BJ_SO_UNENCRYPTED 0x5801
+  // Undocumented. Without it the 360 encrypts the traffic and drops the
+  // replies, reporting success throughout. The original Xbox rejects it with
+  // WSAENOPROTOOPT and needs only the startup flag.
+  #if defined(_XENON)
+    #define BJ_SO_UNENCRYPTED 0x5801
+  #endif
 #else
   #error "http_sockets.cpp is for platforms without libcurl"
 #endif
@@ -47,7 +46,9 @@ namespace {
 
 std::atomic<bool> g_abort{ false };
 bool g_initialized  = false;
-long g_timeoutSeconds = 30;
+// A server transcoding at about realtime can take longer than half a minute
+// to produce a three second segment, and cutting it off there truncates it.
+long g_timeoutSeconds = 60;
 
 constexpr int  kConnectTimeoutMs = 10000;
 constexpr int  kMaxRedirects     = 5;
@@ -138,12 +139,8 @@ void SetBlocking(socket_t s, bool blocking)
 }
 
 // Waits until the socket is readable or writable, or the deadline passes.
-// Capped at a second a time so an abort is noticed promptly.
-//
-// A pending connect that *fails* is reported in exceptfds on a Winsock-shaped
-// stack, never in writefds, so waiting on writefds alone turns "refused" and
-// "no route" into a ten-second timeout and a misleading message. `failed` says
-// which happened.
+// A failed connect lands in exceptfds here, never writefds, so watching
+// writefds alone turns "refused" into a ten second timeout.
 enum class Ready { Read, Write };
 bool WaitReady(socket_t s, Ready which, DWORD deadline, bool* failed = nullptr)
 {
@@ -200,6 +197,7 @@ socket_t Connect(const ParsedUrl& url, std::string& error)
     socket_t s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (s == kInvalidSocket) { error = "could not create a socket"; return kInvalidSocket; }
 
+#if defined(BJ_SO_UNENCRYPTED)
     {
         BOOL unencrypted = TRUE;
         if (setsockopt(s, SOL_SOCKET, BJ_SO_UNENCRYPTED,
@@ -207,11 +205,18 @@ socket_t Connect(const ParsedUrl& url, std::string& error)
             LOGF("[http] could not mark the socket unencrypted: %d", WSAGetLastError());
         }
     }
+#endif
 
     // The same tuning the Wii U needed: a bigger receive buffer so a video
     // segment arrives at something near line rate, and no Nagle delay on a
     // request that is written in one go.
+    // The original Xbox's pool is fixed at XNetStartup: asking a socket for
+    // more than it holds loses packets rather than enlarging it.
+#if defined(_XBOX) && !defined(_XENON)
+    int receiveBuffer = 64 * 1024;
+#else
     int receiveBuffer = 256 * 1024;
+#endif
     setsockopt(s, SOL_SOCKET, SO_RCVBUF, (const char*)&receiveBuffer, sizeof(receiveBuffer));
     int enable = 1;
     setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&enable, sizeof(enable));
@@ -313,14 +318,21 @@ public:
 
     bool aborted() const { return aborted_; }
 
+    // Why the last fill() gave up.
+    const char* stopReason() const { return stop_; }
+    int  lastError() const { return lastError_; }
+
+    const char* stop_ = "none";
+    int lastError_ = 0;
+
 private:
     bool fill()
     {
         // SO_RCVTIMEO bounds each attempt at a second, so this loop is what
         // enforces the request's deadline and what notices an abort.
         for (;;) {
-            if (g_abort.load()) { aborted_ = true; return false; }
-            if (GetTickCount() >= deadline_) return false;
+            if (g_abort.load()) { aborted_ = true; stop_ = "aborted"; return false; }
+            if (GetTickCount() >= deadline_) { stop_ = "deadline"; return false; }
 
             buf_.resize(kReadChunk);
             const int got = recv(s_, (char*)buf_.data(), (int)buf_.size(), 0);
@@ -331,10 +343,14 @@ private:
             }
             buf_.clear();
             pos_ = 0;
-            if (got == 0) return false;         // the server closed, cleanly
+            if (got == 0) { stop_ = "server closed"; return false; }
 
             const int err = WSAGetLastError();
-            if (err != WSAETIMEDOUT && err != WSAEWOULDBLOCK) return false;
+            if (err != WSAETIMEDOUT && err != WSAEWOULDBLOCK) {
+                stop_ = "socket error";
+                lastError_ = err;
+                return false;
+            }
             // Otherwise this second produced nothing; go round.
         }
     }
@@ -518,6 +534,7 @@ HttpResponse Perform(const char* method, const std::string& url,
     }
 
     long long contentLength = -1;
+    long long rangeStart = -1;
     bool chunked = false;
     std::string location;
 
@@ -541,6 +558,13 @@ HttpResponse Perform(const char* method, const std::string& url,
         if      (name == "content-length")    contentLength = ParseInt64(value);
         else if (name == "transfer-encoding") chunked = Lowercased(value).find("chunked") != std::string::npos;
         else if (name == "location")          location = value;
+        else if (name == "content-range") {
+            // "bytes 1234-5678/9012". Only the first number matters here.
+            const size_t space = value.find(' ');
+            if (space != std::string::npos) {
+                rangeStart = ParseInt64(value.substr(space + 1));
+            }
+        }
     }
 
     const bool isRedirect = (response.status == 301 || response.status == 302 ||
@@ -556,17 +580,35 @@ HttpResponse Perform(const char* method, const std::string& url,
     }
 
     // 204 and 304 carry no body whatever the headers say.
+    response.contentLength = contentLength;
+    response.rangeStart    = rangeStart;
+
     const bool bodyless = (response.status == 204 || response.status == 304);
     bool complete = true;
+    size_t received = 0;
+    const Writer count = [&](const uint8_t* data, size_t length) {
+        received += length;
+        return write(data, length);
+    };
     if (!bodyless) {
-        complete = chunked ? PumpChunked(reader, write)
-                           : PumpBody(reader, contentLength, write);
+        complete = chunked ? PumpChunked(reader, count)
+                           : PumpBody(reader, contentLength, count);
     }
 
     BJ_CLOSE_SOCKET(s);
 
-    if (!complete && !reader.aborted() && contentLength >= 0) {
-        response.error = "the connection dropped before the body was complete";
+    // Jellyfin streams HLS segments chunked as the transcoder produces them,
+    // so a body can end short without a Content-Length to check it against.
+    if (!complete && !reader.aborted()) {
+        char why[160];
+        _snprintf(why, sizeof(why),
+                  "incomplete body: %s after %lu of %s bytes (%s)",
+                  reader.stopReason(), (unsigned long)received,
+                  contentLength >= 0 ? bj::ToString((long)contentLength).c_str() : "unknown",
+                  chunked ? "chunked" : "content-length");
+        why[sizeof(why) - 1] = '\0';
+        response.error = why;
+        LOGF("[http] %s", why);
     } else if (reader.aborted()) {
         response.error = "aborted";
     }

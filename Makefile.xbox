@@ -1,0 +1,97 @@
+# Midway Butter and Jelly: the original Xbox build, through OXDK.
+#
+#   make -f Makefile.xbox        build bin/default.xbe
+#
+# Same tree as the other consoles, including the software H.264 decoder.
+
+OXDK_DIR    ?= third_party/OXDK
+OXDK_TARGET := xbox
+XBE_TITLE   := butterandjelly
+XBE_NAME    := Midway Butter and Jelly
+XBE_MODE    := RETAIL
+# cxbe defaults this to yes, which holds the title to 64MB even on a 128MB
+# console. Software decode needs every byte the box has.
+XBE_LIMIT64MB := no
+
+# libc++ for the containers and strings src/core uses.
+OXDK_LIBCXX := 1
+
+include $(OXDK_DIR)/xbox/third-party/SDL2x/oxdk/sdl2x.mk
+include mk/ffmpeg.mk
+include mk/ffmpeg-x86.mk
+
+# av_file_map wants POSIX open, read and close, which the 2003 XDK does not
+# have. Nothing in the decode path calls it.
+FFMPEG_SRCS := $(filter-out %/file.c,$(FFMPEG_SRCS))
+
+APP_SRCS := \
+    src/main.cpp \
+    src/core/thread.cpp \
+    src/core/log.cpp \
+    src/core/json.cpp \
+    src/core/ts_demux.cpp \
+    src/core/video_frame.cpp \
+    src/core/hls.cpp \
+    src/core/settings.cpp \
+    src/core/audio_decoder_minimp3.cpp \
+    src/core/audio_output.cpp \
+    src/core/player.cpp \
+    src/core/jellyfin.cpp \
+    src/core/discovery.cpp \
+    src/core/worker.cpp \
+    src/platform/http_sockets.cpp \
+    src/platform/xbox/platform_xbox.cpp \
+    src/platform/video_decoder_ffmpeg1.cpp \
+    src/ui/app.cpp \
+    src/ui/art_cache.cpp \
+    src/ui/render.cpp \
+    src/ui/image_load_stb.cpp \
+    src/ui/text_font_stb.cpp \
+    third_party/cJSON/cJSON.c \
+    $(OXDK_DIR)/xbox/oxdk/libcxx-shim/libcxx_runtime.cpp
+
+# SDL2x's Xbox backend has mutexes, semaphores, threads and TLS but no
+# condition variable. SDL's generic one is built on the first two.
+SDL2X_EXTRA := $(SDL2X_DIR)/src/thread/generic/SDL_syscond.c
+
+SRCS = $(APP_SRCS) $(SDL2X_SRC_LIST) $(SDL2X_EXTRA) \
+       $(FFMPEG_SRCS) $(FFX86_SRCS) $(FFX86_ASM)
+
+ASMFLAGS := $(FFX86_ASMFLAGS)
+
+PROJ_INC  := -Isrc -Ithird_party/cJSON -Ithird_party/stb -Ithird_party/minimp3
+# libc++ mode raises _MSC_VER to 1900, which switches on a block in
+# SDL_endian.h that defines _m_prefetch for clang. clang has it as a builtin,
+# so the two collide. Claiming the header guard skips the block.
+# The Pentium III has SSE but not SSE2, which stb_image's SIMD path assumes.
+PROJ_DEFS := -DSTBI_NO_SIMD -DMINIMP3_NO_SIMD -D__PRFCHWINTRIN_H -include src/platform/xbox/xbox_compat.h
+
+# FFMPEG_SIMD=0 builds the same libavcodec with no x86 assembly. Has to
+# follow PROJ_DEFS, which is assigned rather than appended.
+FFMPEG_SIMD ?= 1
+ifeq ($(FFMPEG_SIMD),0)
+FFX86_SRCS :=
+FFX86_ASM  :=
+PROJ_DEFS  += -DBJ_FFMPEG_NO_SIMD
+endif
+
+CFLAGS   += $(SDL2X_DEFINES) $(SDL2X_INCLUDES) $(PROJ_INC) $(PROJ_DEFS)
+CXXFLAGS += $(SDL2X_DEFINES) $(SDL2X_INCLUDES) $(PROJ_INC) $(PROJ_DEFS) \
+            $(FFMPEG_USE_FLAGS) -std=gnu++17
+
+# xnet for sockets, which the SDL2x link line does not include.
+OXDK_LIBS = $(SDL2X_LIBS) xnet.lib
+
+include $(OXDK_DIR)/oxdk.mk
+
+# libavcodec's own translation units need its own flags: see mk/ffmpeg-xbox.mk.
+# oxdk_obj comes from the include above, so this has to follow it.
+# FFMPEG_OPT=-O0 builds just the decoder unoptimized, which separates a
+# miscompiled decoder from corrupt input when the picture breaks up.
+FFMPEG_OPT ?=
+$(foreach s,$(FFMPEG_SRCS) $(FFX86_SRCS),$(call oxdk_obj,$(s))): \
+    CFLAGS += $(FFMPEG_BUILD_FLAGS) $(FFMPEG_OPT)
+
+# The decoder calls straight into libavcodec, so it is built the same way.
+$(call oxdk_obj,src/platform/video_decoder_ffmpeg1.cpp): \
+    CXXFLAGS += $(FFMPEG_ABI_FLAGS)

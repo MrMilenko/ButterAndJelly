@@ -45,6 +45,9 @@
 #ifndef av_extern_inline
 #if defined(__ICL) && __ICL >= 1210 || defined(__GNUC_STDC_INLINE__)
 #    define av_extern_inline extern inline
+#elif defined(__clang__)
+/* Neither spelling emits an out of line definition under clang. */
+#    define av_extern_inline
 #else
 #    define av_extern_inline inline
 #endif
@@ -123,7 +126,11 @@
  * away.  This is useful for variables accessed only from inline
  * assembler without the compiler being aware.
  */
-#if AV_GCC_VERSION_AT_LEAST(3,1)
+/* clang targeting i386-pc-windows-msvc does not define __GNUC__, so the test
+   below misses it. Without the attribute the optimiser discards the static
+   tables that only inline assembly refers to, and the assembly fails to
+   link. */
+#if AV_GCC_VERSION_AT_LEAST(3,1) || defined(__clang__)
 #    define av_used __attribute__((used))
 #else
 #    define av_used

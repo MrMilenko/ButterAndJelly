@@ -157,7 +157,8 @@ void TsDemuxer::parsePmt(const uint8_t* section, size_t length)
 
         // Take the first stream of each kind. Jellyfin gives us exactly one
         // of each, having already picked the tracks we asked for.
-        if (streamType == kStreamTypeH264 && videoPid_ < 0) {
+        if ((streamType == kStreamTypeH264 ||
+             streamType == kStreamTypeMpeg4Part2) && videoPid_ < 0) {
             videoPid_        = pid;
             videoStreamType_ = streamType;
         } else if ((streamType == kStreamTypeMpeg1Audio ||
