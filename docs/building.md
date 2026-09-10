@@ -47,7 +47,10 @@ Set `XDK_DIR` to your XDK, the directory holding `lib/xbox/xboxkrnl.lib`.
 ## Xbox
 
 The same OXDK checkout as the 360, targeting x86 instead, so no separate
-toolchain build is needed. It uses the 2003 Xbox XDK rather than the 360's.
+toolchain build is needed. It uses the 2003 Xbox XDK rather than the 360's,
+which is not redistributable and so is not in the submodule. Copy its
+`lib/*.lib` and `include/` into `third_party/OXDK/xbox/xdk/`, or set
+`XDK_DIR` to a directory holding `lib/xboxkrnl.lib`.
 
 ```sh
 make -f Makefile.xbox

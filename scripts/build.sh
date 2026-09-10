@@ -87,6 +87,13 @@ Or clone it yourself and set OXDK_DIR:
     have nasm || die "nasm is needed for libavcodec's x86 assembly.
 Build without it using FFMPEG_SIMD=0, at about half the decode speed."
     export OXDK_DIR
+    # The 2003 XDK is not redistributable, so the submodule ships without it.
+    if [ -z "$XDK_DIR" ] && [ ! -f "$OXDK_DIR/xbox/xdk/lib/xboxkrnl.lib" ]; then
+        die "No Xbox XDK found. Copy its lib/*.lib and include/ into
+  $OXDK_DIR/xbox/xdk/
+or set XDK_DIR to a directory holding lib/xboxkrnl.lib. See docs/building.md."
+    fi
+    [ -n "$XDK_DIR" ] && export XDK_DIR
     "$OXDK_DIR/scripts/doctor.sh" >/dev/null 2>&1 || true
 }
 
