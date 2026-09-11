@@ -18,3 +18,13 @@ data/
 # Build output
 bin/
 build-wiiu/
+
+# Local server configuration. seerr.txt holds an API key.
+server.txt
+seerr.txt
+session.json
+sessions_*.json
+
+# Object files and their dependency lists sit beside the sources.
+*.d
+.build-target

@@ -54,6 +54,8 @@ APP_SRCS := \
     src/core/audio_output.cpp \
     src/core/player.cpp \
     src/core/jellyfin.cpp \
+    src/core/seerr.cpp \
+    src/core/secret_store.cpp \
     src/core/discovery.cpp \
     src/core/worker.cpp \
     src/platform/http_sockets.cpp \
@@ -62,6 +64,7 @@ APP_SRCS := \
     src/ui/app.cpp \
     src/ui/art_cache.cpp \
     src/ui/render.cpp \
+    src/ui/input_hint.cpp \
     src/ui/image_load_sdl.cpp \
     src/ui/image_load_stb.cpp \
     src/ui/text_font_stb.cpp \
@@ -94,6 +97,12 @@ CXXFLAGS := -O2 -w -std=gnu++17 -fno-rtti $(PROJ_INC) $(PROJ_DEFS)
 
 include $(OXDK_DIR)/oxdk.mk
 
+# OXDK's pattern rules carry no header dependencies of their own. Without
+# these, changing a header leaves every object that included it stale.
+CFLAGS   += -MMD -MP
+CXXFLAGS += -MMD -MP
+-include $(addsuffix .d,$(basename $(SRCS)))
+
 # FFmpeg's own translation units need FFmpeg's own flags: see mk/ffmpeg.mk.
 # A target-specific variable rather than a pattern rule, because oxdk360.mk
 # already installs a generic "%.o: %.c" and which of two matching pattern rules
@@ -103,10 +112,9 @@ $(FFMPEG_SRCS:.c=.o): CFLAGS += $(FFMPEG_BUILD_FLAGS)
 # ---------------------------------------------------------------------------
 # Portability check
 #
-# The libraries above are not ported yet, so the whole title does not link.
-# What can be checked today is that the platform independent core compiles for
-# a 32-bit big-endian PowerPC with this exact toolchain, which is where sign,
-# width and alignment mistakes show up.
+# Compiles the portable core alone for 32-bit big-endian PowerPC, which is
+# where sign, width and alignment mistakes show up. Quicker than a full build
+# when that is all you are checking.
 # ---------------------------------------------------------------------------
 
 # video_frame.cpp and log.cpp are deliberately not here: they use std::thread
@@ -131,9 +139,8 @@ core-check:
 # ---------------------------------------------------------------------------
 # Assets
 #
-# The fonts are read at runtime from game:\, which is the directory the XEX was
-# launched from, so they have to be deployed alongside it. oxdk360.mk's own
-# deploy target sends the XEX and nothing else.
+# Read at runtime from game:\, the directory the XEX was launched from.
+# oxdk360.mk's deploy target sends the XEX and nothing else.
 # ---------------------------------------------------------------------------
 
 # Laid out on the console exactly as they are here, because the code asks for

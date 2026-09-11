@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "ui/art_cache.h"
 
+#include <cstdint>
+
 #include "core/jellyfin.h"
 #include "core/http.h"
+#include "core/features.h"
 #include "core/platform.h"
 #include "core/worker.h"
 #include "core/thread.h"
@@ -29,23 +32,33 @@ ArtCache::~ArtCache()
     clear();
 }
 
-// The key, and the file name, carry the size as well as the item.
-//
-// Keying on the item alone means whichever size is asked for first wins for
-// the rest of the session: the home rows want 260 and ask first, so the detail
-// page's request for 600 gets the 260 one back and stretches it. That is what
-// made posters look soft.
+// The key carries the size as well as the item, or whichever size is asked
+// for first gets stretched to serve every later request.
 std::string ArtCache::cacheKey(const std::string& itemId,
+                               const std::string& variant,
                                int targetWidth, int targetHeight)
 {
-    // The key is also the file name, and FATX allows no "@" and at most 42
-    // characters. A full 32 character item id plus the size and ".jpg.part"
-    // exceeds that, so half the id is used: still 64 bits.
-    const size_t kMaxIdChars = 16;
-    const std::string shortId = itemId.size() > kMaxIdChars
-                                    ? itemId.substr(0, kMaxIdChars)
-                                    : itemId;
-    return shortId + "_" + bj::ToString(targetWidth) +
+    // The key is the file name too, and FATX allows no ":" and 42 characters
+    // at most. Ids run from a 32 character guid to "seerr:movie:1003821", so
+    // the whole thing is hashed rather than cut short.
+    uint64_t hash = 1469598103934665603ull;
+    const std::string parts[2] = { itemId, variant };
+    for (const std::string& part : parts) {
+        for (size_t i = 0; i < part.size(); ++i) {
+            hash ^= (unsigned char)part[i];
+            hash *= 1099511628211ull;
+        }
+        hash ^= '|';
+        hash *= 1099511628211ull;
+    }
+
+    static const char* kHex = "0123456789abcdef";
+    std::string name(16, '0');
+    for (int i = 15; i >= 0; --i) {
+        name[(size_t)i] = kHex[hash & 0xF];
+        hash >>= 4;
+    }
+    return name + "_" + bj::ToString(targetWidth) +
            "x" + bj::ToString(targetHeight);
 }
 
@@ -54,17 +67,42 @@ std::string ArtCache::diskPath(const std::string& key) const
     return Platform::DataDir() + "/art/" + key + ".jpg";
 }
 
+void ArtCache::evictIfFull()
+{
+    while (textures_.size() >= BJ_ART_TEXTURES) {
+        auto oldest = textures_.begin();
+        for (auto at = textures_.begin(); at != textures_.end(); ++at) {
+            if (at->second.used < oldest->second.used) oldest = at;
+        }
+        if (oldest->second.texture) SDL_DestroyTexture(oldest->second.texture);
+        textures_.erase(oldest);
+    }
+}
+
 SDL_Texture* ArtCache::get(const std::string& itemId,
                            const std::string& primaryTag,
                            int targetWidth,
-                           int targetHeight)
+                           int targetHeight,
+                           const std::string& absoluteUrl)
 {
     if (itemId.empty()) return nullptr;
 
-    const std::string key = cacheKey(itemId, targetWidth, targetHeight);
+    // A machine that cannot hold a texture the size of the tile asks for a
+    // smaller picture and lets the GPU scale it up.
+    if (BJ_ART_MAX_WIDTH > 0 && targetWidth > BJ_ART_MAX_WIDTH) {
+        targetHeight = targetHeight * BJ_ART_MAX_WIDTH / targetWidth;
+        targetWidth  = BJ_ART_MAX_WIDTH;
+    }
+
+    const std::string key = cacheKey(itemId,
+                                     absoluteUrl.empty() ? primaryTag : absoluteUrl,
+                                     targetWidth, targetHeight);
 
     auto it = textures_.find(key);
-    if (it != textures_.end()) return it->second;
+    if (it != textures_.end()) {
+        it->second.used = ++clock_;
+        return it->second.texture;
+    }
 
     // A poster that already failed once stays failed for this session rather
     // than re-requesting it every single frame.
@@ -73,20 +111,29 @@ SDL_Texture* ArtCache::get(const std::string& itemId,
     {
         bj::ScopedLock lock(mutex_);
         if (inFlight_.count(key)) return nullptr;
-        inFlight_.insert(key);
     }
 
     const std::string path = diskPath(key);
 
-    // Already on disk from a previous run: skip straight to the upload queue.
+    // Already on disk: no network, so this needs no share of the pool.
     if (Platform::FileExists(path)) {
         bj::ScopedLock lock(mutex_);
+        inFlight_.insert(key);
         readyOnDisk_.push_back(key);
         return nullptr;
     }
 
-    const std::string url = client_.imageUrl(itemId, primaryTag,
-                                            targetWidth, targetHeight);
+    {
+        bj::ScopedLock lock(mutex_);
+        // Leaves workers for everything else. Without this a grid of posters
+        // takes the whole pool and a detail screen waits behind all of them.
+        if (inFlight_.size() >= BJ_ART_IN_FLIGHT) return nullptr;
+        inFlight_.insert(key);
+    }
+
+    const std::string url = absoluteUrl.empty()
+        ? client_.imageUrl(itemId, primaryTag, targetWidth, targetHeight)
+        : absoluteUrl;
     if (url.empty()) {
         bj::ScopedLock lock(mutex_);
         inFlight_.erase(key);
@@ -96,7 +143,8 @@ SDL_Texture* ArtCache::get(const std::string& itemId,
 
     pool_.submit([this, key, url, path] {
         const bool ok = Http::GetToFile(url, path);
-        if (!ok && g_artLogRemaining > 0) {
+        // Quitting cancels transfers in flight, which is not a failure.
+        if (!ok && !Http::AbortRequested() && g_artLogRemaining > 0) {
             --g_artLogRemaining;
             LOGF("[art] could not fetch %s", url.c_str());
         }
@@ -147,7 +195,16 @@ void ArtCache::processCompleted(int budget)
         }
 
         if (tex) {
-            textures_[key] = tex;
+#if defined(_XBOX) && !defined(_XENON)
+            // Says so once if the machine ever gets close, which is the only
+            // thing worth knowing after the budget is set.
+            Platform::WarnIfMemoryLow("artwork");
+#endif
+            evictIfFull();
+            Held held;
+            held.texture = tex;
+            held.used    = ++clock_;
+            textures_[key] = held;
         } else {
             // The file exists but will not decode, so it is truncated or not
             // an image. Drop it; the next run re-downloads.
@@ -166,7 +223,7 @@ size_t ArtCache::inFlightCount()
 void ArtCache::clear()
 {
     for (auto& entry : textures_) {
-        if (entry.second) SDL_DestroyTexture(entry.second);
+        if (entry.second.texture) SDL_DestroyTexture(entry.second.texture);
     }
     textures_.clear();
     failed_.clear();

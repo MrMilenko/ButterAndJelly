@@ -9,7 +9,7 @@
 
 #include "core/audio_decoder.h"
 
-#if !BJ_AUDIO_MPG123
+#if !BJ_AUDIO_MPG123 && !BJ_AUDIO_AAC
 
 #include "core/log.h"
 
@@ -37,8 +37,9 @@ Mp3Decoder::~Mp3Decoder()
     close();
 }
 
-bool Mp3Decoder::open(std::string& error)
+bool Mp3Decoder::open(int streamType, std::string& error)
 {
+    streamType_ = streamType;   // only one thing to decode here
     close();
 
     mp3dec_t* decoder = new mp3dec_t;
@@ -121,4 +122,4 @@ bool Mp3Decoder::decode(const uint8_t* data, size_t length, const PcmFn& onPcm)
     return true;
 }
 
-#endif  // !BJ_AUDIO_MPG123
+#endif  // !BJ_AUDIO_MPG123 && !BJ_AUDIO_AAC

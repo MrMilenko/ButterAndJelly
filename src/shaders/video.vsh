@@ -1,7 +1,7 @@
 ; Vertex shader for the video quad.
 ;
 ; Positions arrive already in clip space and texture coordinates already
-; normalised, both computed on the CPU once per frame, so there is nothing to
+; normalized, both computed on the CPU once per frame, so there is nothing to
 ; transform here: this passes them through.
 ;
 ; Attribute location 0 lands in R1, location 1 in R2.

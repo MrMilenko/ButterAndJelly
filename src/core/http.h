@@ -33,6 +33,10 @@ struct HttpResponse {
     // may answer from somewhere other than where it was asked.
     long long   rangeStart = -1;
 
+    // The session cookie a server handed back, name and value only, ready to
+    // send straight back as a Cookie header. Empty when there was none.
+    std::string setCookie;
+
     // A body cut short still carries 200, so error matters as much as status.
     bool ok() const { return status >= 200 && status < 300 && error.empty(); }
 };

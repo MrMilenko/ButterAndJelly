@@ -69,7 +69,7 @@ package_wiiu() {
     rm -rf "$stage"; mkdir -p "$stage"
     cp build/wiiu/butterandjelly.wuhb "$stage/"
     sed -e "s/@VERSION@/$VERSION/" packaging/README.wiiu.txt > "$stage/README.txt"
-    cp packaging/server.txt.example "$stage/"
+    cp packaging/server.txt.example packaging/seerr.txt.example "$stage/"
     (cd "$OUT" && rm -f "butterandjelly-$VERSION-wiiu.zip" &&
      zip -qr "butterandjelly-$VERSION-wiiu.zip" "butterandjelly-$VERSION-wiiu")
     rm -rf "$stage"
@@ -99,6 +99,7 @@ or set XDK_DIR to a directory holding lib/xboxkrnl.lib. See docs/building.md."
 
 build_xbox() {
     check_xbox
+    use_object_tree xbox
     echo "Building for the original Xbox"
     make -f Makefile.xbox -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
     package_xbox
@@ -106,19 +107,34 @@ build_xbox() {
 
 package_xbox() {
     stage=$OUT/butterandjelly-$VERSION-xbox
-    rm -rf "$stage"; mkdir -p "$stage/butterandjelly/fonts"
+    rm -rf "$stage"; mkdir -p "$stage/butterandjelly/fonts" "$stage/butterandjelly/icons"
     cp bin/default.xbe "$stage/butterandjelly/"
-    cp assets/fonts/*.ttf assets/fonts/OFL.txt "$stage/butterandjelly/fonts/"
+    cp assets/fonts/NotoSans-*.ttf assets/fonts/input_xbox.ttf \
+       assets/fonts/OFL.txt assets/fonts/KENNEY-CC0.txt "$stage/butterandjelly/fonts/"
     sed -e "s/@VERSION@/$VERSION/" packaging/README.xbox.txt > "$stage/README.txt"
-    cp packaging/server.txt.example "$stage/butterandjelly/"
+    cp assets/icons/jellyfin.png assets/icons/seerr.png assets/icons/gear.png "$stage/butterandjelly/icons/"
+    cp packaging/server.txt.example packaging/seerr.txt.example "$stage/butterandjelly/"
     (cd "$OUT" && rm -f "butterandjelly-$VERSION-xbox.zip" &&
      zip -qr "butterandjelly-$VERSION-xbox.zip" "butterandjelly-$VERSION-xbox")
     rm -rf "$stage"
     echo "  $OUT/butterandjelly-$VERSION-xbox.zip"
 }
 
+
+# Both Xbox makefiles compile to objects beside their sources, so the targets
+# share one tree. Switching between them has to empty it.
+STAMP=$ROOT/.build-target
+use_object_tree() {
+    if [ "$(cat "$STAMP" 2>/dev/null)" != "$1" ]; then
+        find src third_party -name '*.o' -delete 2>/dev/null || true
+        find src third_party -name '*.d' -delete 2>/dev/null || true
+    fi
+    echo "$1" > "$STAMP"
+}
+
 build_xenon() {
     check_xenon
+    use_object_tree xenon
     echo "Building for the Xbox 360"
     make -f Makefile.xenon -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
     package_xenon
@@ -126,11 +142,13 @@ build_xenon() {
 
 package_xenon() {
     stage=$OUT/butterandjelly-$VERSION-xbox360
-    rm -rf "$stage"; mkdir -p "$stage/butterandjelly/fonts"
+    rm -rf "$stage"; mkdir -p "$stage/butterandjelly/fonts" "$stage/butterandjelly/icons"
     cp default.xex "$stage/butterandjelly/"
-    cp assets/fonts/*.ttf assets/fonts/OFL.txt "$stage/butterandjelly/fonts/"
+    cp assets/fonts/NotoSans-*.ttf assets/fonts/input_xbox.ttf \
+       assets/fonts/OFL.txt assets/fonts/KENNEY-CC0.txt "$stage/butterandjelly/fonts/"
     sed -e "s/@VERSION@/$VERSION/" packaging/README.xbox360.txt > "$stage/README.txt"
-    cp packaging/server.txt.example "$stage/butterandjelly/"
+    cp assets/icons/jellyfin.png assets/icons/seerr.png assets/icons/gear.png "$stage/butterandjelly/icons/"
+    cp packaging/server.txt.example packaging/seerr.txt.example "$stage/butterandjelly/"
     (cd "$OUT" && rm -f "butterandjelly-$VERSION-xbox360.zip" &&
      zip -qr "butterandjelly-$VERSION-xbox360.zip" "butterandjelly-$VERSION-xbox360")
     rm -rf "$stage"
@@ -141,7 +159,7 @@ case "${1:-all}" in
     wiiu)   build_wiiu ;;
     xenon|xbox360|360) build_xenon ;;
     xbox|ogxbox) build_xbox ;;
-    clean)  rm -rf build dist bin default.xex; find src third_party -name '*.o' -delete 2>/dev/null || true; echo "cleaned" ;;
+    clean)  rm -rf build dist bin default.xex; find src third_party -name '*.o' -delete 2>/dev/null || true; find src third_party -name '*.d' -delete 2>/dev/null || true; rm -f "$ROOT/.build-target"; echo "cleaned" ;;
     all)    build_wiiu; build_xenon; build_xbox ;;
     *)      die "usage: build.sh [wiiu|xenon|xbox|clean|all]" ;;
 esac

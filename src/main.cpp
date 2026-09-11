@@ -2,9 +2,8 @@
 
 // main.cpp: window, renderer, and the frame loop.
 //
-// Identical on both targets. The Wii U's SDL port creates a GX2-backed
-// renderer and drives ProcUI itself, so nothing here has to know which
-// machine it is on.
+// The same on every target: the Wii U's SDL port drives ProcUI itself, so
+// nothing here knows which machine it is on.
 
 #include <SDL.h>
 
@@ -32,6 +31,7 @@ Action ActionFromName(const std::string& name)
     if (name == "back"   || name == "b") return Action::Back;
     if (name == "menu")     return Action::Menu;
     if (name == "refresh")  return Action::Refresh;
+    if (name == "options" || name == "x") return Action::Options;
     if (name == "pageup")   return Action::PageUp;
     if (name == "pagedown") return Action::PageDown;
     return Action::None;
@@ -62,13 +62,9 @@ constexpr int kLogicalHeight = 720;
 
 }  // namespace
 
-// C linkage, which SDL_main.h asks for in as many words: "The application's
-// main() function must be called with C linkage." Without it this is
-// _Z4mainiPPc, the console's CRT startup does not find it by name, and any
-// object that happens to define a plain main, and FFmpeg's softfloat.c has one
-// behind an #ifdef TEST this tree does not guard, gets to be the
-// program instead. Which is exactly what happened: the title printed
-// softfloat's self-test and exited.
+// C linkage, as SDL_main.h requires. Without it the CRT cannot find main by
+// name and links whichever plain main it does find, which on one build was
+// FFmpeg's softfloat self-test.
 extern "C" int main(int argc, char** argv)
 {
     // Before anything else, so the debug channel shows the title is alive even
@@ -81,10 +77,8 @@ extern "C" int main(int argc, char** argv)
     int shotDelayMs   = 6000;
     int keyIntervalMs = 1200;
 
-    // The Xbox 360's CRT hands main no command line at all: argv is null and
-    // argc is not to be trusted with it. Walking it regardless is a fault on
-    // the very first thing this program does, which is a miserable way to
-    // find out.
+    // The 360's CRT hands main no command line: argv is null and argc is
+    // not to be trusted with it.
     if (!argv) argc = 0;
     for (int i = 1; i < argc && argv[i]; ++i) {
         const std::string arg = argv[i];
@@ -145,13 +139,23 @@ extern "C" int main(int argc, char** argv)
     // One screen, and it is a television.
     const Uint32 windowFlags = SDL_WINDOW_FULLSCREEN;
 #else
-    const Uint32 windowFlags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
+    Uint32 windowFlags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
+    if (settings.fullscreen) windowFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+#endif
+
+    int windowW = kLogicalWidth;
+    int windowH = kLogicalHeight;
+#if !defined(__WIIU__) && !defined(_XBOX)
+    if (settings.windowWidth > 0 && settings.windowHeight > 0) {
+        windowW = settings.windowWidth;
+        windowH = settings.windowHeight;
+    }
 #endif
 
     SDL_Window* window = SDL_CreateWindow(
         kAppName,
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        kLogicalWidth, kLogicalHeight, windowFlags);
+        windowW, windowH, windowFlags);
     if (!window) {
         LOGF("[boot] SDL_CreateWindow failed: %s", SDL_GetError());
         Image::Quit();
@@ -177,9 +181,9 @@ extern "C" int main(int argc, char** argv)
     // another, and point sampling shows it.
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
 
-    // Neither Xbox sets one: the interface lays itself out to the renderer's
-    // output size instead, so scaling twice would only cost sharpness.
-#if !defined(_XBOX)
+    // A console has one fixed screen, so a logical size always fits. A
+    // window can be any size, and lays itself out to the real one.
+#if defined(__WIIU__)
     SDL_RenderSetLogicalSize(renderer, kLogicalWidth, kLogicalHeight);
 #endif
 
@@ -191,7 +195,7 @@ extern "C" int main(int argc, char** argv)
              info.name ? info.name : "?", outW, outH,
              (unsigned)info.num_texture_formats);
         // Whether NV12 appears here decides how decoded video reaches the
-        // screen: straight into a texture, or through a colour conversion
+        // screen: straight into a texture, or through a color conversion
         // this CPU would rather not do.
         for (Uint32 i = 0; i < info.num_texture_formats; ++i) {
             LOGF("[boot]   texture format: %s",
@@ -200,10 +204,8 @@ extern "C" int main(int argc, char** argv)
     }
     Platform::LogVideoCapabilities();
 
-    // Open every attached pad. On the console this picks up the GamePad plus
-    // any Pro Controllers or Wiimotes that happen to be paired.
-    // Controllers already present arrive as SDL_CONTROLLERDEVICEADDED once
-    // the event queue is pumped, so the app opens them all in one place.
+    // Already attached pads arrive as SDL_CONTROLLERDEVICEADDED once the
+    // queue is pumped, so they are all opened in one place.
     LOGF("[input] %d joystick(s) attached at start", SDL_NumJoysticks());
 
     int exitCode = 0;

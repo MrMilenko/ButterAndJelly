@@ -2,13 +2,9 @@
 
 // Threads, mutexes and condition variables, one API for every platform.
 //
-// The Xbox 360's libc++ is built with _LIBCPP_HAS_THREADS 0, since libc++'s
-// Win32 backend wants fiber local storage the console has no header for. SDL
-// has threads everywhere, so the 360 uses those and the Wii U and the desktop
-// use the standard library.
-//
 // Shaped like std::thread, minus what nothing here uses: no timed waits, no
-// shared mutexes, no futures.
+// shared mutexes, no futures. Both Xboxes fall back to SDL, whose libc++ is
+// built without a thread backend.
 
 #pragma once
 

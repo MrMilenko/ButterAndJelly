@@ -37,6 +37,8 @@ APP_SRCS := \
     src/core/audio_output.cpp \
     src/core/player.cpp \
     src/core/jellyfin.cpp \
+    src/core/seerr.cpp \
+    src/core/secret_store.cpp \
     src/core/discovery.cpp \
     src/core/worker.cpp \
     src/platform/http_sockets.cpp \
@@ -45,6 +47,7 @@ APP_SRCS := \
     src/ui/app.cpp \
     src/ui/art_cache.cpp \
     src/ui/render.cpp \
+    src/ui/input_hint.cpp \
     src/ui/image_load_stb.cpp \
     src/ui/text_font_stb.cpp \
     third_party/cJSON/cJSON.c \
@@ -83,6 +86,12 @@ CXXFLAGS += $(SDL2X_DEFINES) $(SDL2X_INCLUDES) $(PROJ_INC) $(PROJ_DEFS) \
 OXDK_LIBS = $(SDL2X_LIBS) xnet.lib
 
 include $(OXDK_DIR)/oxdk.mk
+
+# OXDK's pattern rules carry no header dependencies of their own. Without
+# these, changing a header leaves every object that included it stale.
+CFLAGS   += -MMD -MP
+CXXFLAGS += -MMD -MP
+-include $(addsuffix .d,$(basename $(SRCS)))
 
 # libavcodec's own translation units need its own flags: see mk/ffmpeg-xbox.mk.
 # oxdk_obj comes from the include above, so this has to follow it.

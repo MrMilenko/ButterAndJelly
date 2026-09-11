@@ -53,7 +53,7 @@ public:
     // Width in pixels of the string as it would be drawn.
     int measure(const std::string& utf8) const;
 
-    // An ARGB surface the caller owns: `c`'s colour throughout, alpha from
+    // An ARGB surface the caller owns: `c`'s color throughout, alpha from
     // the glyph coverage times `c`'s own alpha. The same thing
     // TTF_RenderUTF8_Blended returns.
     SDL_Surface* render(const std::string& utf8, Color c) const;

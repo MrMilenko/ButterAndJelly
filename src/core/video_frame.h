@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-// Decoded frames, and the colour conversion for platforms that need one.
+// Decoded frames, and the color conversion for platforms that need one.
 //
 // Frames carry a luma plane and two chroma planes at half resolution. The
 // Wii U converts on the CPU, because its SDL renderer takes RGB only; the
@@ -60,7 +60,7 @@ struct Nv12Frame {
 };
 
 // Which matrix to use converting to RGB. Rec.601 for standard definition,
-// Rec.709 for high definition; picking the wrong one shifts every colour.
+// Rec.709 for high definition; picking the wrong one shifts every color.
 enum class ColorSpace { Bt601, Bt709 };
 
 // Byte order within a pixel in memory, not the SDL format name: on a little
@@ -100,12 +100,8 @@ void PackNv12ToYuy2(const Nv12Frame& frame,
                     uint8_t* destination,
                     int destinationStride);
 
-// The same conversion spread across persistent worker threads.
-//
-// Splitting the image three ways brings a 720p frame from 42ms down to 14ms
-// on the console. The workers are kept alive between frames deliberately:
-// creating them per frame would mean 72 thread creations a second, which is
-// its own cost on a machine this size.
+// The same conversion spread across persistent worker threads. Splitting a
+// 720p frame three ways takes it from 42ms to 14ms on the console.
 class Nv12Converter {
 public:
     // `threads` counts the calling thread, which takes a band itself rather

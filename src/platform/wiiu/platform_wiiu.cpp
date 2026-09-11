@@ -132,7 +132,7 @@ void LogVideoCapabilities()
         }
     }
 
-    // The renderer takes RGB only, so every decoded frame has to be colour
+    // The renderer takes RGB only, so every decoded frame has to be color
     // converted on this CPU. Whether that fits in a frame's budget is the
     // question the whole playback design turns on, so measure it here rather
     // than guess from desktop numbers.

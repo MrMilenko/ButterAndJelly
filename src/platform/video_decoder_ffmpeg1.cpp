@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-// H.264 on both Xboxes, in software, through libavcodec 54.
+// H.264 on both Xboxes, in software, through libavcodec 54. Neither XDK has
+// a decoder for it.
 //
-// Neither XDK has an H.264 decoder. The 360's is XMV, which is WMV9 and VC-1,
-// and no server can transcode into that, so both consoles decode in software.
-//
-// Separate from the desktop decoder rather than sharing it behind version
-// guards: this API predates avcodec_send_packet, av_frame_alloc and
-// avcodec_free_context, so the two have almost nothing in common.
+// Separate from the desktop decoder rather than shared behind version guards:
+// this API predates avcodec_send_packet and has almost nothing in common.
 
 #include "core/video_decoder.h"
 
@@ -125,14 +122,9 @@ public:
     {
         if (!context_ || !annexB || length == 0) return false;
 
-        // libavcodec's bitstream readers fetch 32 or 64 bits at a time and
-        // are allowed to run past the end, so the input has to carry
-        // FF_INPUT_BUFFER_PADDING_SIZE zero bytes after it. Handing over the
-        // demuxer's buffer directly read whatever followed it on the heap,
-        // and the hand written assembly reads further ahead than the C does,
-        // so turning on SIMD made a latent bug visible. The zeroes matter as
-        // much as the room: the header warns that non-zero padding lets a
-        // damaged stream overread.
+        // The bitstream readers are allowed to run past the end, so the input
+        // needs FF_INPUT_BUFFER_PADDING_SIZE bytes after it and they have to
+        // be zero: non-zero padding lets a damaged stream overread.
         input_.resize(length + FF_INPUT_BUFFER_PADDING_SIZE);
         std::memcpy(input_.data(), annexB, length);
         std::memset(input_.data() + length, 0, FF_INPUT_BUFFER_PADDING_SIZE);
@@ -191,7 +183,7 @@ private:
     }
 
     // libavcodec gives planar YUV420, and that is what goes downstream: SDL
-    // uploads the three planes as three textures and the GPU does the colour
+    // uploads the three planes as three textures and the GPU does the color
     // conversion, so keeping them apart means chroma is never touched between
     // the decoder and the screen. The Wii U interleaves to NV12 instead
     // because its hardware decoder produces that natively.

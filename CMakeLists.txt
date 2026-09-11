@@ -9,7 +9,7 @@
 # decides which platform layer to compile.
 
 cmake_minimum_required(VERSION 3.16)
-project(butterandjelly VERSION 0.1.2 LANGUAGES C CXX)
+project(butterandjelly VERSION 0.1.3 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
@@ -37,9 +37,12 @@ set(CORE_SOURCES
     src/core/settings.cpp
     src/core/audio_decoder_minimp3.cpp
     src/core/audio_decoder_mpg123.cpp
+    src/core/audio_decoder_ffmpeg.cpp
     src/core/audio_output.cpp
     src/core/player.cpp
     src/core/jellyfin.cpp
+    src/core/seerr.cpp
+    src/core/secret_store.cpp
     src/core/discovery.cpp
     src/platform/http_curl.cpp
 )
@@ -94,15 +97,6 @@ target_link_libraries(bjcore PUBLIC ${SDL2_FOR_CORE_LINK_LIBRARIES})
 find_package(Threads REQUIRED)
 target_link_libraries(bjcore PUBLIC Threads::Threads)
 
-# ------------------------------------------------------------------ jfcli
-
-# Host-only: a headless driver for the same core the console runs, so API
-# problems surface on a laptop instead of on a TV.
-if(NOT NINTENDO_WIIU)
-    add_executable(jfcli tools/jfcli.cpp)
-    target_link_libraries(jfcli PRIVATE bjcore)
-endif()
-
 # --------------------------------------------------------------- SDL2 app
 
 # pkg-config is the one discovery mechanism both sides agree on: Homebrew
@@ -118,6 +112,7 @@ set(APP_SOURCES
     src/ui/app.cpp
     src/ui/art_cache.cpp
     src/ui/render.cpp
+    src/ui/input_hint.cpp
     src/ui/image_load_sdl.cpp
     src/ui/image_load_stb.cpp
     src/ui/text_font_stb.cpp
@@ -139,13 +134,15 @@ if(NINTENDO_WIIU)
 
     wut_create_rpx(butterandjelly)
 
-    # Bundle the fonts and CA list alongside the executable so the .wuhb is
-    # self-contained and nothing has to be copied to the SD card by hand.
+    # Bundle assets into the .wuhb so nothing has to be copied by hand.
     wut_create_wuhb(butterandjelly
         NAME       "WiiU Butter and Jelly"
         SHORTNAME  "WiiU Butter and Jelly"
         AUTHOR     "MrMilenko"
         CONTENT    "${CMAKE_SOURCE_DIR}/assets"
+        ICON       "${CMAKE_SOURCE_DIR}/assets/icons/wiiu-icon.png"
+        TVSPLASH   "${CMAKE_SOURCE_DIR}/assets/icons/wiiu-tv.png"
+        DRCSPLASH  "${CMAKE_SOURCE_DIR}/assets/icons/wiiu-drc.png"
     )
 else()
     target_link_libraries(butterandjelly PRIVATE

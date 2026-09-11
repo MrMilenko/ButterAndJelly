@@ -62,9 +62,8 @@ void Write(const char* fmt, ...)
 #endif
     if (g_path.empty()) return;
 
-    // Reopened per line rather than held open. The console's FTP server
-    // cannot read a file the running app still has open, and the log is only
-    // useful if it can be read while the thing being debugged is on screen.
+    // Reopened per line: the console's FTP server cannot read a file the
+    // running app holds open.
     FILE* fp = std::fopen(Platform::NativePath(g_path).c_str(), "a");
     if (!fp) return;
     std::fprintf(fp, "%s\n", buffer);

@@ -2,11 +2,9 @@
 
 // video_decoder_h264dec.cpp: H.264 through the Wii U's hardware decoder.
 //
-// The decode block is a separate piece of hardware reading main memory
-// directly, so anything handed to it has to be aligned and pushed out of the
-// CPU's cache first, and anything it writes has to be invalidated before the
-// CPU reads it back. Getting that wrong produces torn or stale frames rather
-// than an error, so the cache calls below are load bearing.
+// The decode block reads main memory directly, so buffers must be aligned and
+// flushed before it runs and invalidated before the CPU reads them back.
+// Getting that wrong gives torn frames rather than an error.
 
 #include "core/video_decoder.h"
 
@@ -227,13 +225,11 @@ private:
 
         const uint8_t* base = static_cast<const uint8_t*>(result.framebuffer);
 
-        // Borrowed, not copied: the decoder reuses this buffer on the next
-        // Execute, so a callback that keeps a frame must copy it.
+        // Borrowed: the decoder reuses this buffer on the next Execute.
         //
-        // Chroma starts after the CODED luma rows, not the visible ones.
-        // The hardware lays the planes out by coded size, so using the
-        // visible height puts a band of luma across the top of any stream
-        // whose height is not a multiple of 16.
+        // Chroma starts after the coded luma rows, not the visible ones, or
+        // any stream whose height is not a multiple of 16 gets a band of
+        // luma across the top.
         Nv12View view;
         view.luma   = base + (size_t)stride * result.cropTop;
         view.chroma = base + (size_t)stride * codedHeight

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "core/player.h"
 
+#include "core/features.h"
+
 #include "core/hls.h"
 #include "core/http.h"
 #include "core/log.h"
@@ -17,7 +19,7 @@ namespace {
 
 // Sized by memory, not by a frame count: forty 720p frames plus the retired
 // pool would be 100MB on top of the decoder's own.
-constexpr size_t kFrameQueueBytes = 20u * 1024 * 1024;
+constexpr size_t kFrameQueueBytes = (size_t)BJ_FRAME_QUEUE_MB * 1024 * 1024;
 constexpr size_t kMinQueuedFrames = 12;
 constexpr size_t kMaxQueuedFrames = 40;
 
@@ -41,14 +43,8 @@ Player::~Player()
     close();
 }
 
-bool Player::open(JellyfinClient& client, const std::string& itemId,
-                  int maxHeight, double startSeconds, std::string& error)
+void Player::resetForOpen(double startSeconds)
 {
-    close();
-
-    if (!client.signedIn()) { error = "Not signed in"; return false; }
-
-    client_   = &client;
     stopping_ = false;
     paused_   = false;
     decoded_  = 0;
@@ -76,14 +72,57 @@ bool Player::open(JellyfinClient& client, const std::string& itemId,
     }
 
     state_ = State::Opening;
-    // Copied into the closure rather than captured by reference: open()
-    // returns as soon as the threads are running, so nothing on its frame is
-    // still alive by the time they read their arguments. `client` outlives
-    // the player, so its address is safe to hold.
+}
+
+// The player only needs somewhere to fetch segments from.
+bool Player::openUrl(const std::string& masterUrl, double startSeconds,
+                     std::string& error)
+{
+    close();
+    if (masterUrl.empty()) { error = "No stream URL"; return false; }
+
+    client_ = nullptr;
+    resetForOpen(startSeconds);
+
+    const std::string url = masterUrl;
+    downloader_ = bj::Thread([this, url, startSeconds] {
+        downloadUrlThread(url, startSeconds);
+    }, "bj-download");
+    decoder_ = bj::Thread([this] { decodeThread(); }, "bj-decode");
+    return true;
+}
+
+bool Player::open(JellyfinClient& client, const std::string& itemId,
+                  int maxHeight, double startSeconds, std::string& error)
+{
+    return open(client, itemId, maxHeight, startSeconds,
+                JellyfinClient::PlaybackRequest(), error);
+}
+
+JellyfinClient::PlaybackPlan Player::plan() const
+{
+    bj::ScopedLock lock(mutex_);
+    return plan_;
+}
+
+bool Player::open(JellyfinClient& client, const std::string& itemId,
+                  int maxHeight, double startSeconds,
+                  const JellyfinClient::PlaybackRequest& request,
+                  std::string& error)
+{
+    close();
+
+    if (!client.signedIn()) { error = "Not signed in"; return false; }
+
+    client_ = &client;
+    resetForOpen(startSeconds);
+
+    // Copied, not captured: open() returns before the threads read these.
+    // `client` outlives the player, so its address is safe to hold.
     JellyfinClient* clientPtr = &client;
     const std::string id = itemId;
-    downloader_ = bj::Thread([this, clientPtr, id, maxHeight, startSeconds] {
-        downloadThread(clientPtr, id, maxHeight, startSeconds);
+    downloader_ = bj::Thread([this, clientPtr, id, maxHeight, startSeconds, request] {
+        downloadThread(clientPtr, id, maxHeight, startSeconds, request);
     }, "bj-download");
     decoder_ = bj::Thread([this] { decodeThread(); }, "bj-decode");
     return true;
@@ -149,16 +188,18 @@ std::string Player::errorText() const
 }
 
 void Player::downloadThread(JellyfinClient* client, std::string itemId,
-                            int maxHeight, double startSeconds)
+                            int maxHeight, double startSeconds,
+                            JellyfinClient::PlaybackRequest request)
 {
     std::string error;
 
     JellyfinClient::PlaybackPlan plan;
-    if (!client->playbackInfo(itemId, plan, error)) { setFailed(error); return; }
+    if (!client->playbackInfo(itemId, request, plan, error)) { setFailed(error); return; }
 
     {
         bj::ScopedLock lock(mutex_);
         playSessionId_ = plan.playSessionId;
+        plan_          = plan;
     }
     displayAspect_ = plan.displayAspect;
     LOGF("[player] source %dx%d %s %s level %d, display aspect %s",
@@ -167,6 +208,20 @@ void Player::downloadThread(JellyfinClient* client, std::string itemId,
          bj::ToString(plan.displayAspect, 3).c_str());
 
     const std::string masterUrl = client->videoHlsUrl(plan, maxHeight);
+    streamFrom(masterUrl, startSeconds);
+}
+
+// Everything after "here is a playlist": fetch it, walk the segments, feed
+// the demuxer. Shared, because which service produced the playlist makes no
+// difference from this point on.
+void Player::downloadUrlThread(std::string masterUrl, double startSeconds)
+{
+    streamFrom(masterUrl, startSeconds);
+}
+
+void Player::streamFrom(const std::string& masterUrl, double startSeconds)
+{
+    std::string error;
     if (masterUrl.empty()) { setFailed("Could not build a stream URL"); return; }
 
     // The server starts the transcode to build this playlist, so the first
@@ -208,10 +263,8 @@ void Player::downloadThread(JellyfinClient* client, std::string itemId,
             if (stopping_) break;
         }
 
-        // A segment fetch can fail for reasons that pass: the console's wifi
-        // dropping a moment, or the server still starting a transcode. Give
-        // up only after several tries, since abandoning the film over one
-        // bad request is far worse than a pause.
+        // Wifi dropping a moment, or a transcode still starting. Worth
+        // several tries before abandoning the film.
         std::vector<uint8_t> data;
         data.reserve(1 << 20);
         HttpResponse response;
@@ -384,8 +437,11 @@ void Player::decodeThread()
 
     auto onSample = [&](const TsSample& sample) {
         if (sample.video) {
+            const uint64_t start = Platform::NowMs();
             decoder->decode(sample.data.data(), sample.data.size(),
                             sample.pts, onFrame);
+            decodeMs_.fetch_add((int)(Platform::NowMs() - start));
+            decodeFrames_.fetch_add(1);
             return;
         }
 
@@ -431,7 +487,7 @@ void Player::decodeThread()
         demux.feed(segment.data(), segment.size(), onSample);
 
         // Lost transport packets cost whole slices, which the decoder
-        // conceals as blocks of flat colour.
+        // conceals as blocks of flat color.
         const uint64_t droppedNow = demux.packetsDropped();
         if (droppedNow != lastPacketsDropped) {
             LOGF("[demux] %lu transport packet(s) dropped (%lu total)",
@@ -508,10 +564,8 @@ void Player::pushFrame(const Nv12View& view)
     bj::ScopedLock lock(mutex_);
     if (stopping_) return;
 
-    // Insert in timestamp order. B-frames decode out of presentation order
-    // and the decoder emits each as it finishes, so arrival order is not
-    // display order. Reordering depth is bounded by the DPB, so the walk
-    // from the back is short.
+    // B-frames arrive out of presentation order, so insert by timestamp.
+    // The DPB bounds the depth, so the walk from the back is short.
     if (frame.pts < 0 || frames_.empty() || frames_.back().pts <= frame.pts) {
         frames_.push_back(std::move(frame));
     } else {
@@ -602,10 +656,8 @@ bool Player::nextFrame(Nv12Frame& out)
 
         if (haveFrame) dropped_.fetch_add(1);
 
-        // The caller's previous buffers go back to the pool rather than
-        // being freed, so the next frame reuses them.
-        // Bound the pool as well. Left alone it grows to the size of the
-        // queue, doubling how much decoded video is held.
+        // Back to the pool rather than freed, so the next frame reuses
+        // them. Bounded, or it grows to the size of the queue.
         if (out.valid() && pool_.size() < 4) pool_.push_back(std::move(out));
         else out = Nv12Frame();
         out = std::move(frames_.front());

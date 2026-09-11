@@ -5,7 +5,7 @@
 ;   green = Cb
 ;   blue  = Cr
 ;
-; A recognisable picture in red means the luma fetch survives alongside a
+; A recognizable picture in red means the luma fetch survives alongside a
 ; second fetch. A black red channel means the second fetch is breaking the
 ; first, which is the difference between this and the luma-only shader that
 ; worked.

@@ -53,12 +53,9 @@ void StartNetwork()
 
     int started = XNetStartup(&params);
     if (started != 0) {
-        // Almost always because something else brought XNet up first, a
-        // dashboard with an FTP server in it say, in which case it is
-        // running with the security this title needs bypassed, and every
-        // packet to an ordinary host on the LAN is quietly dropped while
-        // every call still reports success. Take it down and start it again
-        // on our terms.
+        // Usually something else brought XNet up first, without the security
+        // bypass this needs, and LAN packets are then dropped while every
+        // call still reports success. Restart it on our terms.
         LOGF("[net] XNetStartup returned %d; restarting it", started);
         XNetCleanup();
         started = XNetStartup(&params);
@@ -177,12 +174,9 @@ uint64_t NowMs()
 
 uint32_t LocalIPv4()
 {
-    // Used only to work out a subnet broadcast address for server discovery,
-    // which falls back to the global broadcast address when this is zero.
-    //
-    // XNetGetTitleXnAddr answers XNET_GET_XNADDR_PENDING while the interface
-    // is still coming up, so it is asked for rather than waited on: discovery
-    // runs again, and by then it is usually settled.
+    // XNetGetTitleXnAddr answers PENDING while the interface comes up, so
+    // this is asked rather than waited on. Discovery runs again later, and
+    // falls back to the global broadcast address meanwhile.
     Init();
     if (!g_network) return 0;
 
@@ -194,12 +188,9 @@ uint32_t LocalIPv4()
     return ntohl(address.ina.s_addr);
 }
 
-// The console's own wireless, measured on this network, sustains about
-// 3.5 Mbit/s. A 720p transcode was being asked for at 5 Mbit/s, so segments
-// arrived slower than they played: the frame queue drained to nothing every
-// few seconds while the decoder, which by then had capacity to spare, waited
-// on the network. Ask for something the link can carry instead. Wired is left
-// alone; 100Mbit is not a constraint.
+// The console's wireless sustains about 3.5 Mbit/s, well under what a 720p
+// transcode asks for, so cap the request to what the link can carry. Wired is
+// left alone.
 uint32_t LinkBitrateCeiling()
 {
     Init();

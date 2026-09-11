@@ -2,11 +2,9 @@
 
 // text_font_stb.cpp: glyphs without a font library.
 //
-// stb_truetype rasterises a codepoint to an 8-bit coverage bitmap and reports
-// the metrics to place it with. Everything above that, laying a string out,
-// kerning it and compositing it into a surface SDL can upload, is here. It is
-// the same shape as what TTF_RenderUTF8_Blended hands back, so the renderer
-// above does not know which implementation it is talking to.
+// stb_truetype rasterizes a codepoint; laying out, kerning and compositing
+// into an SDL surface is here. Output matches TTF_RenderUTF8_Blended, so the
+// renderer cannot tell the two apart.
 
 #include "ui/text_font.h"
 
@@ -133,7 +131,7 @@ SDL_Surface* TextFont::render(const std::string& utf8, Color c) const
     const int width  = measure(utf8);
     if (width <= 0 || height <= 0) return nullptr;
 
-    // A pixel of the requested colour everywhere, transparent to start; the
+    // A pixel of the requested color everywhere, transparent to start; the
     // glyphs only ever raise the alpha. Same result as a blended TTF render,
     // and it means scaling and blending behave identically.
     SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(

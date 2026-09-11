@@ -2,11 +2,8 @@
 
 // worker.h: a small fixed thread pool.
 //
-// Every network call in the core blocks. The UI must not, so all of them run
-// here and hand results back through the result queue, which the main thread
-// drains once per frame. Keeping the threading in one file also means the
-// console port has exactly one place to change if wut's pthread support
-// turns out to disagree with bj::Thread.
+// Every network call in the core blocks and the UI must not, so they run here
+// and hand results back through a queue the main thread drains each frame.
 
 #pragma once
 

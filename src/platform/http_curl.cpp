@@ -135,6 +135,41 @@ curl_slist* BuildHeaderList(const HttpHeaders& headers)
     return list;
 }
 
+// Accumulates the response headers so a session cookie can be picked out.
+size_t CollectHeaders(char* data, size_t size, size_t nmemb, void* userp)
+{
+    const size_t total = size * nmemb;
+    static_cast<std::string*>(userp)->append(data, total);
+    return total;
+}
+
+// "Set-Cookie: name=value; Path=/" reduces to what a Cookie header needs.
+std::string FirstSetCookie(const std::string& headers)
+{
+    size_t pos = 0;
+    while (pos < headers.size()) {
+        size_t eol = headers.find('\n', pos);
+        if (eol == std::string::npos) eol = headers.size();
+
+        std::string line = headers.substr(pos, eol - pos);
+        pos = eol + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+
+        std::string lower = line.substr(0, 11);
+        for (char& ch : lower) {
+            if (ch >= 'A' && ch <= 'Z') ch = (char)(ch - 'A' + 'a');
+        }
+        if (lower != "set-cookie:") continue;
+
+        std::string value = line.substr(11);
+        while (!value.empty() && value.front() == ' ') value.erase(value.begin());
+        const size_t semi = value.find(';');
+        if (semi != std::string::npos) value = value.substr(0, semi);
+        if (!value.empty()) return value;
+    }
+    return "";
+}
+
 HttpResponse Perform(CURL* curl, curl_slist* headerList)
 {
     HttpResponse resp;
@@ -230,61 +265,73 @@ void SetTimeoutSeconds(long seconds)
     if (seconds > 0) g_timeoutSeconds = seconds;
 }
 
+// Everything the three string-returning calls set up the same way.
+struct StringRequest {
+    CURL*        curl = nullptr;
+    curl_slist*  list = nullptr;
+    std::string  body;
+    std::string  rawHeaders;
+
+    bool begin(const std::string& url, const HttpHeaders& headers)
+    {
+        curl = curl_easy_init();
+        if (!curl) return false;
+        ApplyCommonOptions(curl, url);
+        list = BuildHeaderList(headers);
+        if (list) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, list);
+        curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, CollectHeaders);
+        curl_easy_setopt(curl, CURLOPT_HEADERDATA, &rawHeaders);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteToString);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
+        return true;
+    }
+
+    HttpResponse finish()
+    {
+        HttpResponse done = Perform(curl, list);
+        done.body      = std::move(body);
+        done.setCookie = FirstSetCookie(rawHeaders);
+        return done;
+    }
+};
+
 HttpResponse Get(const std::string& url, const HttpHeaders& headers)
 {
-    HttpResponse resp;
-    CURL* curl = curl_easy_init();
-    if (!curl) { resp.error = "curl_easy_init failed"; return resp; }
-
-    ApplyCommonOptions(curl, url);
-    curl_slist* list = BuildHeaderList(headers);
-    if (list) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, list);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteToString);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp.body);
-
-    HttpResponse done = Perform(curl, list);
-    done.body = std::move(resp.body);
-    return done;
+    StringRequest request;
+    if (!request.begin(url, headers)) {
+        HttpResponse resp;
+        resp.error = "curl_easy_init failed";
+        return resp;
+    }
+    return request.finish();
 }
 
 HttpResponse Post(const std::string& url,
                   const std::string& body,
                   const HttpHeaders& headers)
 {
-    HttpResponse resp;
-    CURL* curl = curl_easy_init();
-    if (!curl) { resp.error = "curl_easy_init failed"; return resp; }
-
-    ApplyCommonOptions(curl, url);
-    curl_slist* list = BuildHeaderList(headers);
-    if (list) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, list);
-    curl_easy_setopt(curl, CURLOPT_POST, 1L);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)body.size());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteToString);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp.body);
-
-    HttpResponse done = Perform(curl, list);
-    done.body = std::move(resp.body);
-    return done;
+    StringRequest request;
+    if (!request.begin(url, headers)) {
+        HttpResponse resp;
+        resp.error = "curl_easy_init failed";
+        return resp;
+    }
+    curl_easy_setopt(request.curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(request.curl, CURLOPT_POSTFIELDS, body.c_str());
+    curl_easy_setopt(request.curl, CURLOPT_POSTFIELDSIZE, (long)body.size());
+    return request.finish();
 }
 
 HttpResponse Delete(const std::string& url, const HttpHeaders& headers)
 {
-    HttpResponse resp;
-    CURL* curl = curl_easy_init();
-    if (!curl) { resp.error = "curl_easy_init failed"; return resp; }
-
-    ApplyCommonOptions(curl, url);
-    curl_slist* list = BuildHeaderList(headers);
-    if (list) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, list);
-    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteToString);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp.body);
-
-    HttpResponse done = Perform(curl, list);
-    done.body = std::move(resp.body);
-    return done;
+    StringRequest request;
+    if (!request.begin(url, headers)) {
+        HttpResponse resp;
+        resp.error = "curl_easy_init failed";
+        return resp;
+    }
+    curl_easy_setopt(request.curl, CURLOPT_CUSTOMREQUEST, "DELETE");
+    return request.finish();
 }
 
 bool GetToFile(const std::string& url,

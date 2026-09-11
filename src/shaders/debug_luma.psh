@@ -1,10 +1,10 @@
-; Diagnostic shader: samples only the luma plane and paints it as grey.
+; Diagnostic shader: samples only the luma plane and paints it as gray.
 ;
 ; Splits "sampling is broken" from "the conversion maths is broken":
-;   a recognisable black and white picture -> sampling works, so the fault is
+;   a recognizable black and white picture -> sampling works, so the fault is
 ;                                             in the chroma plane or the
 ;                                             conversion
-;   flat grey, black, or noise             -> the luma fetch itself is not
+;   flat gray, black, or noise             -> the luma fetch itself is not
 ;                                             returning texture data
 
 ; $MODE = "UniformRegister"

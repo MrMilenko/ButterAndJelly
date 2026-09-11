@@ -2,7 +2,7 @@
 //
 // The hardware decoder writes a luma plane and an interleaved chroma plane.
 // Sampling them as two textures and converting here means the CPU never
-// touches video pixels at all: no colour conversion, and no upload through
+// touches video pixels at all: no color conversion, and no upload through
 // SDL's texture path, which costs a full GPU sync per frame.
 //
 // Rec.709 limited range, the same matrix the CPU path used.

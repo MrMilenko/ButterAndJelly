@@ -56,13 +56,9 @@ SDL_Texture* TextureFromSurface(SDL_Renderer* renderer, SDL_Surface* surface)
         source = converted;
     }
 
-    // Rounded up to a power of two in both directions. The three 64x64 probes
-    // that proved textures work on this console were powers of two; every
-    // string, at its own arbitrary size, was not, and every one of them
-    // sampled some other texture's pixels. Snes360's texture is "always square
-    // with power-of-2 dimensions" for the same era of reason. The string is
-    // drawn from the top-left corner with a source rectangle, so the padding
-    // costs memory and nothing else.
+    // Power of two in both directions, or the texture samples another one's
+    // pixels. Drawn from the top left with a source rect, so the padding
+    // costs only memory.
     const int texW = NextPowerOfTwo(source->w);
     const int texH = NextPowerOfTwo(source->h);
 
@@ -137,7 +133,11 @@ void Renderer::shutdown()
     }
     textCache_.clear();
 
+    // Every face has to go before the library does, or closing one afterwards
+    // walks into a freed FreeType.
     for (TextFont& f : fonts_) f.close();
+    iconFont_.close();
+    iconFontPath_.clear();
     TextFont::shutdownLibrary();
     sdl_ = nullptr;
 }
@@ -146,6 +146,12 @@ const TextFont* Renderer::fontFor(FontSize size) const
 {
     return &fonts_[(int)size];
 }
+
+namespace {
+// Icons share the text cache. The slot sits past every FontSize so a glyph
+// and a string cannot key to the same entry.
+constexpr int kIconCacheSlot = 100;
+}  // namespace
 
 // ------------------------------------------------------------- primitives
 
@@ -280,6 +286,81 @@ void Renderer::drawText(const std::string& text, int x, int y,
     SDL_RenderCopy(sdl_, entry->texture, &src, &dst);
 }
 
+bool Renderer::setIconFont(const std::string& path)
+{
+    if (path == iconFontPath_) return iconFont_.valid();
+
+    iconFont_.close();
+    iconFontPath_ = path;
+    if (path.empty()) return false;
+
+    // Kenney's glyphs sit inside a square em box, so at the text's own pixel
+    // size they come out visibly smaller than the words beside them.
+    if (!iconFont_.open(path, (PixelSizeFor(FontSize::Small) * 2))) {
+        LOGF("[ui] no input glyphs from %s: %s", path.c_str(),
+             TextFont::lastError());
+        iconFontPath_.clear();
+        return false;
+    }
+    return true;
+}
+
+bool Renderer::hasIconFont() const
+{
+    return iconFont_.valid();
+}
+
+Renderer::CachedText* Renderer::acquireIcon(const std::string& utf8, Color c)
+{
+    if (utf8.empty() || !iconFont_.valid()) return nullptr;
+
+    const Uint32 packed = ((Uint32)c.r << 24) | ((Uint32)c.g << 16) |
+                          ((Uint32)c.b << 8)  | (Uint32)c.a;
+    const CacheKey key{ utf8, kIconCacheSlot, packed };
+
+    auto it = textCache_.find(key);
+    if (it != textCache_.end() && it->second.texture) {
+        it->second.lastUsedFrame = frame_;
+        return &it->second;
+    }
+
+    SDL_Surface* surf = iconFont_.render(utf8, c);
+    if (!surf) return nullptr;
+
+    CachedText entry;
+    entry.w = surf->w;
+    entry.h = surf->h;
+    entry.lastUsedFrame = frame_;
+    entry.texture = TextureFromSurface(sdl_, surf);
+    SDL_FreeSurface(surf);
+    if (!entry.texture) return nullptr;
+
+    return &textCache_.emplace(key, entry).first->second;
+}
+
+void Renderer::drawIcon(const std::string& utf8, int x, int y, Color c)
+{
+    CachedText* entry = acquireIcon(utf8, c);
+    if (!entry) return;
+
+    SDL_Rect dst = { x, y, entry->w, entry->h };
+    const SDL_Rect src = { 0, 0, entry->w, entry->h };
+    SDL_RenderCopy(sdl_, entry->texture, &src, &dst);
+}
+
+int Renderer::iconWidth(const std::string& utf8)
+{
+    if (utf8.empty() || !iconFont_.valid()) return 0;
+    return iconFont_.measure(utf8);
+}
+
+int Renderer::iconHeight() const
+{
+    if (!iconFont_.valid()) return 0;
+    const int skip = iconFont_.lineSkip();
+    return skip > 0 ? skip : (PixelSizeFor(FontSize::Small) * 2);
+}
+
 int Renderer::textWidth(const std::string& text, FontSize size)
 {
     if (text.empty()) return 0;
@@ -306,7 +387,7 @@ int Renderer::drawTextClipped(const std::string& text, int x, int y,
     }
 
     // Trim a character at a time until the ellipsised string fits. Titles are
-    // short, so the linear walk is not worth optimising.
+    // short, so the linear walk is not worth optimizing.
     std::string trimmed = text;
     while (!trimmed.empty()) {
         // Do not split a UTF-8 sequence; step back over continuation bytes.

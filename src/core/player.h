@@ -44,8 +44,22 @@ public:
     // startSeconds picks the segment to begin from. Seeking works by
     // starting at a different point in the same playlist rather than asking
     // the server for a stream that begins elsewhere.
+    // Plays a master playlist directly, for services that build their own.
+    bool openUrl(const std::string& masterUrl, double startSeconds,
+                 std::string& error);
+
     bool open(JellyfinClient& client, const std::string& itemId,
               int maxHeight, double startSeconds, std::string& error);
+
+    // The same, but naming a version and the tracks within it.
+    bool open(JellyfinClient& client, const std::string& itemId,
+              int maxHeight, double startSeconds,
+              const JellyfinClient::PlaybackRequest& request,
+              std::string& error);
+
+    // What the server settled on, once state() has left Opening. Empty
+    // sources means the answer has not arrived yet.
+    JellyfinClient::PlaybackPlan plan() const;
 
     // Stops the worker and tells the server to stop transcoding.
     void close();
@@ -73,15 +87,22 @@ public:
     double bufferedAudioSeconds();
     bool   audioRunning() const { return audioClockReady_.load(); }
     int decodedFrames() const { return decoded_.load(); }
+
+    // Milliseconds spent inside the decoder, and the frames that covers.
+    // Read and reset together by whoever logs them.
+    int takeDecodeMs()     { return decodeMs_.exchange(0); }
+    int takeDecodeFrames() { return decodeFrames_.exchange(0); }
     int droppedFrames() const { return dropped_.load(); }
 
 private:
     // Downloading and decoding are separate threads with a queue of whole
-    // segments between them. With one thread doing both, a segment fetch
-    // stalled everything behind it and the frame queue ran dry: the console
-    // logged "queue 0" almost continuously.
+    // segments between them, so a stalled fetch does not empty the queue.
+    void resetForOpen(double startSeconds);
+    void downloadUrlThread(std::string masterUrl, double startSeconds);
+    void streamFrom(const std::string& masterUrl, double startSeconds);
     void downloadThread(JellyfinClient* client, std::string itemId, int maxHeight,
-                        double startSeconds);
+                        double startSeconds,
+                        JellyfinClient::PlaybackRequest request);
     void decodeThread();
     void pushFrame(const Nv12View& view);
     void setFailed(const std::string& message);
@@ -90,6 +111,8 @@ private:
     std::atomic<bool>  paused_{ false };
     std::atomic<bool>  stopping_{ false };
     std::atomic<int>   decoded_{ 0 };
+    std::atomic<int>   decodeMs_{ 0 };
+    std::atomic<int>   decodeFrames_{ 0 };
     std::atomic<int>   dropped_{ 0 };
     // Presentation timing depends entirely on frame timestamps being present
     // and ascending. The console's decoder carries them through a double, so
@@ -119,6 +142,7 @@ private:
     std::vector<Nv12Frame> pool_;
     std::string            error_;
     std::string            playSessionId_;
+    JellyfinClient::PlaybackPlan plan_;
 
     double  duration_ = 0.0;
     // Worked out from the first frame's size, since it depends on what the

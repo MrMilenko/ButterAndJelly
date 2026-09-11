@@ -2,11 +2,8 @@
 
 // image_load.h: decoding artwork, and writing screenshots.
 //
-// Two implementations, chosen the same way TextFont is. SDL_image where a
-// build of it exists; stb_image and stb_image_write on the Xbox 360, which has
-// neither SDL_image nor libpng nor libjpeg. Only JPEG and PNG are ever
-// wanted, which is what a Jellyfin server serves artwork as, and which is
-// exactly the part of SDL_image these two headers already cover.
+// SDL_image where a build of it exists, stb otherwise. Only JPEG and PNG are
+// ever wanted.
 
 #pragma once
 

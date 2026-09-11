@@ -67,6 +67,26 @@ namespace Platform {
 
 // The XBE's own 64MB limit flag decides whether a 128MB console is seen
 // as one.
+// Stock hardware is 64MB. Eight of them left is the point at which the next
+// allocation is worth knowing about.
+void WarnIfMemoryLow(const char* where)
+{
+    static bool warned = false;
+    if (warned) return;
+
+    MEMORYSTATUS status;
+    std::memset(&status, 0, sizeof(status));
+    status.dwLength = sizeof(status);
+    GlobalMemoryStatus(&status);
+    if (status.dwAvailPhys >= 8u * 1024 * 1024) return;
+
+    warned = true;
+    LOGF("[mem] low at %s: %lu KB free of %lu KB",
+         where,
+         (unsigned long)(status.dwAvailPhys / 1024),
+         (unsigned long)(status.dwTotalPhys / 1024));
+}
+
 void LogMemory(const char* when)
 {
     MEMORYSTATUS status;

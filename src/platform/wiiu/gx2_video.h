@@ -2,7 +2,7 @@
 
 // Draws decoded video with the GPU rather than the CPU.
 //
-// SDL's Wii U renderer takes RGB only, so going through it costs a colour
+// SDL's Wii U renderer takes RGB only, so going through it costs a color
 // conversion and an upload, about 25ms of a 41.7ms frame. This bypasses SDL
 // for the video image alone: the NV12 planes become textures and a shader
 // converts while sampling. The interface still draws over the top.
@@ -27,7 +27,7 @@ public:
     void shutdown();
     bool ready() const { return ready_; }
 
-    // Draws `frame` into the rectangle given in normalised device
+    // Draws `frame` into the rectangle given in normalized device
     // coordinates, where -1,-1 is bottom left and 1,1 is top right.
     void draw(const Nv12Frame& frame, float left, float top,
               float right, float bottom);

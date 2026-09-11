@@ -2,11 +2,9 @@
 
 // audio_output.h: PCM to the speakers, and the clock everything syncs to.
 //
-// Audio is the master clock during playback. Video timing previously ran off
-// the wall clock, which drifts against the sound card and shows up as lip
-// sync error over a couple of minutes. Asking the audio device how much of
-// what we queued has actually been played gives a clock that cannot drift
-// from what the viewer hears.
+// Audio is the master clock during playback, taken from how much of the queue
+// the device has actually played. A wall clock drifts against the sound card
+// and shows up as lip sync error within minutes.
 
 #pragma once
 

@@ -3,10 +3,8 @@
 // discovery.cpp: Jellyfin's UDP auto-discovery.
 //
 // The server listens on UDP 7359 and answers the literal string
-// "who is JellyfinServer?" with a small JSON object naming itself. On a
-// console this is the difference between the user typing an IP address with
-// a thumbstick and just picking their server off a list, so it is the
-// primary path and manual entry is the fallback.
+// "who is JellyfinServer?" with a small JSON object naming itself. This is
+// the primary path; manual entry is the fallback.
 
 #include "core/jellyfin.h"
 
@@ -24,10 +22,9 @@
 #include <vector>
 
 #if defined(_XBOX)
-  // The console's sockets are Winsock's names over the XDK's own stack: winsockx.h
-  // defines recvfrom, sendto and the rest as macros onto XSocket*, so the code
-  // below is unchanged. This has to come before the _WIN32 branch, because the
-  // toolchain defines _WIN32 here too and there is no ws2tcpip.h.
+  // winsockx.h maps recvfrom, sendto and the rest onto XSocket*, so the code
+  // below is unchanged. Before the _WIN32 branch: the toolchain defines that
+  // too, and there is no ws2tcpip.h.
   #include <xtl.h>
   #include <winsockx.h>
   // winsockx.h has the calls but not this constant, which belongs to the

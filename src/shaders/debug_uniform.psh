@@ -5,7 +5,7 @@
 ;   red black, green shows the picture  -> the uniforms are not arriving
 ;   red bright, green black             -> luma sampling fails in this shader
 ;
-; Expected when healthy: a red-tinted greyscale picture, since C0.x is 1.164
+; Expected when healthy: a red-tinted grayscale picture, since C0.x is 1.164
 ; and clamps to full red.
 
 ; $MODE = "UniformRegister"

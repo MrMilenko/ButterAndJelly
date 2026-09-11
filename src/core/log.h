@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-// log.h: one log line goes to both stderr and a file on disk.
+// log.h: every line goes to both the platform's debug channel and a file.
 //
-// On the console stderr is only visible if something is watching Aroma's
-// output, and the build machine is not attached to the TV. The file copy on
-// the SD card is what actually gets read afterwards, over FTP.
+// The file is what gets read afterwards, since no console has a terminal.
 
 #pragma once
 

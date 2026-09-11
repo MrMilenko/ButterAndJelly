@@ -15,12 +15,12 @@
 namespace {
 
 // mpg123_init is global and must happen once per process.
-bool EnsureLibraryInitialised()
+bool EnsureLibraryInitialized()
 {
-    static bool initialised = false;
+    static bool initialized = false;
     static bool ok = false;
-    if (!initialised) {
-        initialised = true;
+    if (!initialized) {
+        initialized = true;
         ok = (mpg123_init() == MPG123_OK);
         if (!ok) LOGF("[audio] mpg123_init failed");
     }
@@ -34,11 +34,12 @@ Mp3Decoder::~Mp3Decoder()
     close();
 }
 
-bool Mp3Decoder::open(std::string& error)
+bool Mp3Decoder::open(int streamType, std::string& error)
 {
+    streamType_ = streamType;   // only one thing to decode here
     close();
 
-    if (!EnsureLibraryInitialised()) { error = "Could not start the audio decoder"; return false; }
+    if (!EnsureLibraryInitialized()) { error = "Could not start the audio decoder"; return false; }
 
     int err = MPG123_OK;
     mpg123_handle* handle = mpg123_new(nullptr, &err);

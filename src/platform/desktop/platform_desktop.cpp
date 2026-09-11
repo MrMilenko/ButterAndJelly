@@ -22,6 +22,10 @@
 #define MKDIR(p) mkdir(p, 0755)
 #endif
 
+#if defined(__APPLE__)
+  #include <mach-o/dyld.h>
+#endif
+
 namespace {
 
 std::string g_dataDir;
@@ -61,9 +65,29 @@ void Init()
     // build can override this without touching the portable code.
     if (const char* override = std::getenv("BUTTERANDJELLY_ASSETS")) {
         g_assetDir = override;
-    } else {
-        g_assetDir = "assets";
+        return;
     }
+#if defined(__APPLE__)
+    // A bundle's working directory is not the source tree.
+    {
+        char path[4096];
+        uint32_t size = sizeof(path);
+        if (_NSGetExecutablePath(path, &size) == 0) {
+            std::string exe(path);
+            const size_t slash = exe.rfind('/');
+            if (slash != std::string::npos) {
+                const std::string dir = exe.substr(0, slash);
+                const std::string bundled = dir + "/../Resources/assets";
+                struct stat info;
+                if (stat(bundled.c_str(), &info) == 0 && S_ISDIR(info.st_mode)) {
+                    g_assetDir = bundled;
+                    return;
+                }
+            }
+        }
+    }
+#endif
+    g_assetDir = "assets";
 }
 
 std::string DataDir()  { Init(); return g_dataDir; }

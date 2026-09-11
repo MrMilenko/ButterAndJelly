@@ -11,7 +11,13 @@
 
 #include <cstdint>
 #include <string>
+
 #include <vector>
+
+// Where an item came from, and so what can be done with it. Jellyfin items
+// play; Seerr items are things the library does not have yet, so they are
+// asked for instead.
+enum class MediaSource { Jellyfin, Seerr };
 
 // A server found by UDP broadcast on the local network.
 struct JfServer {
@@ -28,9 +34,69 @@ struct JfLibrary {
     std::string collectionType;
 };
 
+// One track inside a media source: video, audio or subtitle.
+struct JfStream {
+    int         index = 0;
+    std::string type;          // "Video" | "Audio" | "Subtitle"
+    std::string codec;
+    std::string language;      // ISO 639-2, "eng"
+    std::string title;         // what the server would show in a menu
+    std::string deliveryUrl;   // set when the server will hand it over as a file
+    int         channels = 0;
+    bool        isDefault = false;
+    bool        isForced = false;
+    bool        isExternal = false;
+    bool        isText = false;      // false means a bitmap format, PGS or VOBSUB
+    bool        isHearingImpaired = false;
+
+    // "English (SDH)", built from language and codec when there is no title.
+    std::string label() const;
+};
+
+// One version of an item. A film ripped twice has two of these.
+struct JfMediaSource {
+    std::string id;
+    std::string name;
+    std::string container;
+    int64_t     size = 0;
+    int64_t     runTimeTicks = 0;
+    int         bitrate = 0;
+    bool        supportsDirectPlay = false;
+    bool        supportsDirectStream = false;
+    bool        supportsTranscoding = false;
+    int         defaultAudioIndex = -1;
+    int         defaultSubtitleIndex = -1;
+    std::vector<JfStream> streams;
+
+    const JfStream* streamAt(int index) const;
+    std::vector<const JfStream*> ofType(const char* type) const;
+};
+
+// A named seek point.
+struct JfChapter {
+    int64_t     startTicks = 0;
+    std::string name;
+    std::string imageTag;
+    int seconds() const { return (int)(startTicks / 10000000); }
+};
+
+// A cast or crew credit.
+struct JfPerson {
+    std::string id;
+    std::string name;
+    std::string role;
+    std::string type;          // "Actor" | "Director" | "Writer" ...
+    std::string primaryTag;
+};
+
 // One row in a library listing. Deliberately flat: the console renders from
 // this directly, no second lookup.
 struct JfItem {
+    // Seerr fills these two; Jellyfin leaves them at their defaults and the
+    // art cache builds its own URL from id and primaryTag instead.
+    MediaSource source = MediaSource::Jellyfin;
+    std::string artUrl;
+
     std::string id;
     std::string name;
     std::string type;          // "MusicAlbum" | "Audio" | "Movie" | "Series" ...
@@ -57,13 +123,27 @@ struct JfItem {
     std::string seriesId;
     std::string seasonId;
 
-    // Shown on the detail screen. Requested only where they will be read,
-    // since asking for them on a 300 item grid is a lot of JSON for text
-    // nobody sees.
+    // Detail screen only: too much JSON to ask for on a whole grid.
     std::string genres;          // already joined, "Comedy, Romance"
+    std::string studios;         // likewise
     std::string officialRating;  // "PG-13"
     double      communityRating = 0.0;
+    double      criticRating = 0.0;
     std::string tagline;
+    std::string premiereDate;    // ISO 8601, as the server sent it
+    std::string status;          // series only: "Continuing" | "Ended"
+    int         childCount = 0;  // seasons in a series, tracks in an album
+    int         mediaSourceCount = 0;  // more than one means a version picker
+
+    bool        isFavorite = false;
+
+    // Seerr's own numbering: 0 none, 2 pending, 3 processing, 4 partial,
+    // 5 available.
+    int         requestStatus = 0;
+
+    // Filled only by itemDetails, and only when asked for.
+    std::vector<JfChapter> chapters;
+    std::vector<JfPerson>  people;
 
     // Runtime in whole seconds, 0 when the server did not report one.
     int runtimeSeconds() const { return (int)(runTimeTicks / 10000000); }
@@ -73,7 +153,8 @@ struct JfItem {
     bool partiallyWatched() const { return resumeTicks > 0 && !played; }
 };
 
-// What a browse request is asking for.
+// What a browse request is asking for. Everything past searchTerm maps
+// straight onto a /Items query parameter of the same name.
 struct JfQuery {
     std::string parentId;
     std::string includeItemTypes;   // e.g. "MusicAlbum" or "Audio"
@@ -83,7 +164,33 @@ struct JfQuery {
     bool        recursive = false;
     int         startIndex = 0;
     int         limit = 0;          // 0 => server default
+
+    std::string filters;            // "IsUnplayed", "IsResumable", ...
+    std::string genres;             // pipe separated, as the server wants
+    std::string years;              // comma separated
+    std::string officialRatings;    // pipe separated
+    std::string studios;            // pipe separated
+    std::string nameStartsWith;
+    std::string mediaTypes;
+    int         isFavorite = -1;    // -1 leaves it out of the query
+    int         isPlayed   = -1;
+    // Extra Fields to ask for, appended to the ones every listing needs.
+    std::string extraFields;
 };
+
+// What a library holds, for a filter menu. /Items/Filters2 returns only these.
+struct JfFilterOptions {
+    std::vector<std::string> genres;
+    std::vector<std::string> tags;
+};
+
+// The choices a sort menu offers.
+struct JfSortOption {
+    const char* label;
+    const char* sortBy;
+    bool        descendingByDefault;
+};
+const JfSortOption* JfSortOptions(int& count);
 
 enum class QuickConnectState {
     Idle,
@@ -98,12 +205,11 @@ public:
     JellyfinClient();
 
     // ---- Discovery -------------------------------------------------------
-    // Broadcasts on UDP 7359 and collects replies for waitMs. Servers that
-    // answer need no typing at all, which matters a lot on a console.
+    // Broadcasts on UDP 7359 and collects replies for waitMs.
     static std::vector<JfServer> Discover(int waitMs = 1500);
 
     // ---- Server ----------------------------------------------------------
-    // Normalises the URL (adds http:// when missing, strips trailing '/').
+    // Normalizes the URL (adds http:// when missing, strips trailing '/').
     void        setServerUrl(const std::string& url);
     std::string serverUrl() const { return serverUrl_; }
 
@@ -125,6 +231,13 @@ public:
 
     void quickConnectCancel();
 
+    // Approves a Quick Connect code as the signed in user, the way the web
+    // interface does when one is typed into it.
+    bool authorizeQuickConnect(const std::string& code, std::string& error);
+
+    // The server's host, without scheme or port.
+    std::string serverHost() const;
+
     // ---- Username/password (fallback for servers with Quick Connect off) --
     bool authenticateByName(const std::string& username,
                             const std::string& password,
@@ -137,29 +250,45 @@ public:
     std::string deviceId() const { return deviceId_; }
 
     bool loadSession();    // from DataDir()/session.json
+    // A session saved for one particular server, if there is one.
+    bool loadSessionFor(const std::string& serverUrl);
+    // Forget the current session locally, keeping it on disk for next time.
+    void releaseSession();
     bool saveSession() const;
     void signOut();        // also tells the server to drop the session
 
     // ---- Browse ----------------------------------------------------------
     std::vector<JfLibrary> libraries(std::string& error);
     std::vector<JfItem>    items(const JfQuery& query, std::string& error);
+    // The same, also reporting how many the server holds in total.
+    std::vector<JfItem>    items(const JfQuery& query, std::string& error,
+                                 int& totalCount);
 
     // Rows for a home screen. Each is a plain list the grid can render.
     std::vector<JfItem> resumable(std::string& error, int limit = 20);
     std::vector<JfItem> nextUp(std::string& error, int limit = 20);
     std::vector<JfItem> recentlyAdded(std::string& error, int limit = 20);
+    std::vector<JfItem> favorites(std::string& error, int limit = 20);
     std::vector<JfItem> search(const std::string& term, std::string& error,
                                int limit = 60);
 
     // Watch state. The server is the record; this just tells it.
     void markPlayed(const std::string& itemId, bool played);
+    void setFavorite(const std::string& itemId, bool favorite);
+
+    // What the items under `parentId` actually carry, for a filter menu.
+    bool filterOptions(const std::string& parentId, JfFilterOptions& out,
+                       std::string& error);
+
+    // Everything a detail screen shows, chapters and cast included.
+    bool itemDetailsFull(const std::string& itemId, JfItem& out,
+                         std::string& error);
     bool                   itemDetails(const std::string& itemId,
                                        JfItem& out,
                                        std::string& error);
 
-    // Series drill-down. Seasons and episodes come from dedicated endpoints
-    // rather than a ParentId query, because only these return them in
-    // broadcast order with the right specials handling.
+    // These endpoints rather than a ParentId query: only they return
+    // broadcast order and handle specials.
     std::vector<JfItem> seasons(const std::string& seriesId, std::string& error);
     std::vector<JfItem> episodes(const std::string& seriesId,
                                  const std::string& seasonId,
@@ -173,9 +302,8 @@ public:
                          int maxWidth,
                          int maxHeight) const;
 
-    // Audio as 16-bit PCM in a WAV container. Asking the server to do the
-    // decoding means we need no codec on a 2012 PowerPC, at the cost of
-    // ~1.5 Mbit/s, which a LAN absorbs without noticing.
+    // 16-bit PCM in a WAV container, so no codec is needed here. About
+    // 1.5 Mbit/s.
     std::string audioPcmUrl(const std::string& itemId) const;
 
     // Audio in its original form, no transcode. Cheaper on the network and
@@ -183,6 +311,17 @@ public:
     std::string audioDirectUrl(const std::string& itemId) const;
 
     // ---- Video playback --------------------------------------------------
+    // Which version, and which tracks within it, playback should use. Left
+    // alone this asks for the first version and the tracks the server would
+    // pick itself.
+    struct PlaybackRequest {
+        std::string mediaSourceId;
+        int     audioIndex    = -1;   // -1 keeps the source's own default
+        int     subtitleIndex = -1;   // -1 keeps the default, -2 means none
+        int64_t startTicks    = 0;
+        int     maxBitrate    = 0;
+    };
+
     // What the server intends to send us for this item, and the session id
     // that later ties a transcode and its progress reports together.
     struct PlaybackPlan {
@@ -199,9 +338,30 @@ public:
         // server did not say, in which case the coded frame is the answer.
         double displayAspect = 0.0;
         bool directPlay   = false;
+
+        // Every version the item has, so a picker needs no second request.
+        std::vector<JfMediaSource> sources;
+        int         sourceIndex   = 0;
+        int         audioIndex    = -1;
+        int         subtitleIndex = -1;
+        std::string container;
+
+        const JfMediaSource* source() const;
     };
     bool playbackInfo(const std::string& itemId, PlaybackPlan& out,
                       std::string& error);
+    bool playbackInfo(const std::string& itemId, const PlaybackRequest& request,
+                      PlaybackPlan& out, std::string& error);
+
+    // What the viewer has asked playback to do, over and above the height.
+    // Zero on any of these means the client decides.
+    struct StreamPrefs {
+        int videoBitrate = 0;    // kbit/s
+        int maxFramerate = 0;
+        int audioBitrate = 0;    // kbit/s
+        std::string audioCodecs; // empty means whatever this build decodes
+    };
+    void setStreamPrefs(const StreamPrefs& prefs) { prefs_ = prefs; }
 
     // HLS master playlist for `plan`, capped at `maxHeight`.
     //
@@ -211,6 +371,28 @@ public:
     // Annex-B, which is what the console's decoder takes directly.
     std::string videoHlsUrl(const PlaybackPlan& plan, int maxHeight,
                             int64_t startTicks = 0) const;
+
+    // The file itself, no server side work at all. Only usable where the
+    // container and both codecs are ones this build can demux and decode.
+    std::string videoDirectUrl(const PlaybackPlan& plan) const;
+
+    // A text subtitle track as a standalone file, for drawing ourselves.
+    // Bitmap tracks have no useful answer here and must be burned in.
+    std::string subtitleUrl(const std::string& itemId,
+                            const std::string& mediaSourceId,
+                            int streamIndex,
+                            const char* format = "vtt") const;
+
+    // Fetches and parses a text subtitle track. Cues come back sorted.
+    struct JfCue {
+        double      start = 0.0;   // seconds
+        double      end   = 0.0;
+        std::string text;          // markup stripped, newlines kept
+    };
+    std::vector<JfCue> subtitles(const std::string& itemId,
+                                 const std::string& mediaSourceId,
+                                 int streamIndex,
+                                 std::string& error) const;
 
     // Bitrate to request for a given height. Sending none lets the server
     // pick a default low enough that it scaled a 480p request down to 224p.
@@ -228,6 +410,9 @@ public:
                                 bool paused);
     void reportPlaybackStopped(const std::string& itemId,
                                int64_t positionTicks);
+    // Keeps a transcode alive while paused. The server reaps sessions that
+    // stop reporting.
+    void reportPlaybackPing(const std::string& playSessionId);
 
 private:
     static std::vector<JfItem> parseItemList(const std::string& body);
@@ -249,4 +434,5 @@ private:
 
     std::string qcSecret_;
     std::string qcCode_;
+    StreamPrefs prefs_;
 };

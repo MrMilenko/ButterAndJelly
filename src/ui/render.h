@@ -2,10 +2,8 @@
 
 // render.h: drawing helpers over SDL_Renderer.
 //
-// Text is the expensive part: SDL_ttf rasterises to a surface every call, so
-// every string we draw is cached as a texture keyed by content, size and
-// colour. A library grid redraws the same labels every frame and would
-// otherwise re-rasterise a few hundred strings at 60Hz.
+// Text is the expensive part: rasterizing happens on every call, so each
+// string is cached as a texture keyed by content, size and color.
 
 #pragma once
 
@@ -54,6 +52,15 @@ public:
     int  drawTextClipped(const std::string& text, int x, int y, int maxWidth,
                          FontSize size, Color c, Align align = Align::Left);
 
+    // ---- input glyphs ----
+    // A second face holding controller and key symbols, swapped when the
+    // viewer picks up a different device. Hint bar sizes only.
+    bool setIconFont(const std::string& path);
+    bool hasIconFont() const;
+    void drawIcon(const std::string& utf8, int x, int y, Color c);
+    int  iconWidth(const std::string& utf8);
+    int  iconHeight() const;
+
     int  textWidth(const std::string& text, FontSize size);
     int  lineHeight(FontSize size);
 
@@ -73,9 +80,14 @@ private:
 
     const TextFont* fontFor(FontSize size) const;
     CachedText* acquire(const std::string& text, FontSize size, Color c);
+    // Icons share the cache; the size slot is offset so a glyph and a string
+    // that happen to match cannot collide.
+    CachedText* acquireIcon(const std::string& utf8, Color c);
 
     SDL_Renderer* sdl_ = nullptr;
     TextFont fonts_[5];
+    TextFont iconFont_;
+    std::string iconFontPath_;
 
     using CacheKey = std::tuple<std::string, int, Uint32>;
     std::map<CacheKey, CachedText> textCache_;

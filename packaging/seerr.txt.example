@@ -1,0 +1,14 @@
+# Rename this file to seerr.txt. Only needed when Seerr is not on the same
+# machine as Jellyfin: the app finds that case on its own.
+#
+# Two lines: the address of your request server, then its API key. Use the
+# address and port you use to reach its web interface. http:// only, https://
+# will not connect. If you leave the scheme off, http:// is assumed.
+#
+# The key is under Settings, General, API Key in the web interface. Anyone
+# holding it can make requests as you, so treat the file as a password.
+#
+# Lines starting with # are ignored.
+
+http://192.168.1.10:5055
+your-api-key-here

@@ -16,6 +16,9 @@
 #elif defined(_XBOX)
   #define BJ_PLATFORM_NAME "Midway"
   #define BJ_PLATFORM_LONG "Xbox"
+#elif defined(__APPLE__)
+  #define BJ_PLATFORM_NAME "Darwin"
+  #define BJ_PLATFORM_LONG "macOS"
 #else
   #define BJ_PLATFORM_NAME "Desktop"
   #define BJ_PLATFORM_LONG "desktop"
@@ -24,12 +27,22 @@
 inline constexpr const char* kPlatformName     = BJ_PLATFORM_NAME;
 inline constexpr const char* kPlatformLongName = BJ_PLATFORM_LONG;
 
+// The same name with its article, for running text. "the Wii U", but "macOS".
+#if defined(__APPLE__)
+  #define BJ_PLATFORM_THE BJ_PLATFORM_LONG
+#else
+  #define BJ_PLATFORM_THE "the " BJ_PLATFORM_LONG
+#endif
+inline constexpr const char* kPlatformArticleName = BJ_PLATFORM_THE;
+
 // Identity we present to Jellyfin. The server shows DeviceName in its
-// dashboard and in "Devices", so make it something recognisable on a TV.
+// dashboard and in "Devices", so make it something recognizable on a TV.
 inline constexpr const char* kAppName       = BJ_PLATFORM_NAME " Butter and Jelly";
 inline constexpr const char* kAppShortName  = "ButterAndJelly";
-inline constexpr const char* kAppVersion    = "0.1.2";
-inline constexpr const char* kAppUserAgent  = "ButterAndJelly/0.1.2 (" BJ_PLATFORM_LONG ")";
+inline constexpr const char* kAppVersion    = "0.1.3";
+
+#define BJ_COPYRIGHT_YEAR "2026"
+inline constexpr const char* kAppUserAgent  = "ButterAndJelly/0.1.3 (" BJ_PLATFORM_LONG ")";
 
 namespace Platform {
 
@@ -64,17 +77,17 @@ uint64_t NowMs();
 // they drop 255.255.255.255.
 uint32_t LocalIPv4();
 
-// What this machine's network link can be expected to carry, in bits per
-// second, or 0 when there is no reason to think it is a constraint.
-//
-// Only the Xbox 360 answers with anything: its built-in wireless measures
 #if defined(_XBOX) && !defined(_XENON)
 void LogMemory(const char* when);
+
+// Logs once, the first time free memory falls below what the build was
+// budgeted for. Silent on a machine that never gets there.
+void WarnIfMemoryLow(const char* where);
 #endif
 
-// around 3.5 Mbit/s in practice, which is less than a 720p transcode was
-// being asked for, and the difference showed up as playback stalling every
-// few seconds on high bitrate films while the decoder sat idle.
+// What the network link can be expected to carry in bits per second, or 0
+// when it is not a constraint. Only the Xbox 360 answers: its wireless
+// measures around 3.5 Mbit/s, under what a 720p transcode asks for.
 uint32_t LinkBitrateCeiling();
 
 // Writes what the machine's video hardware can do to the log. On the console

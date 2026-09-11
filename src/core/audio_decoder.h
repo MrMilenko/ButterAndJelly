@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-// MP3 to PCM. Jellyfin is asked for MP3 because both consoles have a decoder
-// for it and neither has one for AAC.
-//
-// mpg123 on the Wii U and the desktop, minimp3 on the Xbox 360, which has no
-// mpg123 build.
+// MP3 to PCM. Jellyfin is asked for MP3 because every console here decodes it
+// and none of them decode AAC.
 
 #pragma once
 
-// Neither Xbox has an mpg123 build.
-#if defined(_XBOX)
+#include "core/features.h"
+
+// libavcodec where it can decode more than MP3, mpg123 where it is packaged,
+// minimp3 on the consoles that have neither. Exactly one is compiled.
+#if BJ_AUDIO_AAC
+  #define BJ_AUDIO_MPG123 0
+#elif defined(_XBOX)
   #define BJ_AUDIO_MPG123 0
 #else
   #define BJ_AUDIO_MPG123 1
@@ -31,7 +33,10 @@ public:
     Mp3Decoder(const Mp3Decoder&) = delete;
     Mp3Decoder& operator=(const Mp3Decoder&) = delete;
 
-    bool open(std::string& error);
+    // streamType is the MPEG-TS value from the demuxer: 0x03/0x04 for MP3,
+    // 0x0F for AAC. Zero means "whatever this build decodes by default".
+    bool open(std::string& error) { return open(0, error); }
+    bool open(int streamType, std::string& error);
     void close();
 
     // Feeds compressed bytes, which need not be frame aligned. Decoded audio
@@ -55,6 +60,7 @@ private:
     // mpg123_handle on one implementation, an mp3dec_t on the other. Opaque
     // here so this header needs neither library's own.
     void* handle_ = nullptr;
+    int   streamType_ = 0;
     int   sampleRate_ = 0;
     int   channels_   = 0;
 };

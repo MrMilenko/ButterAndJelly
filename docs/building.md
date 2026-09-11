@@ -3,11 +3,13 @@
 ```sh
 git clone --recursive https://github.com/MrMilenko/ButterAndJelly
 cd ButterAndJelly
-scripts/build.sh            # all three
+scripts/build.sh            # all three consoles
 scripts/build.sh wiiu
 scripts/build.sh xenon
 scripts/build.sh xbox
 scripts/build.sh clean
+
+scripts/package-macos.sh    # Darwin Butter and Jelly.app
 ```
 
 One archive per console in `dist/`. Requirements are checked first and anything
@@ -17,12 +19,19 @@ Cloned without `--recursive`: `git submodule update --init`.
 
 ## Requirements
 
-| | Wii U | Xbox 360 | Xbox |
-| --- | --- | --- | --- |
-| Toolchain | devkitPPC and wut | OXDK, submodule in `third_party/OXDK` | OXDK |
-| Build | cmake, ninja | make | make, nasm |
-| SDK | none | Xbox 360 XDK, yours | 2003 Xbox XDK, yours |
-| Output | `butterandjelly.wuhb` | `default.xex` and `fonts/` | `default.xbe` and `fonts/` |
+| | macOS | Wii U | Xbox 360 | Xbox |
+| --- | --- | --- | --- | --- |
+| Toolchain | clang | devkitPPC and wut | OXDK, submodule in `third_party/OXDK` | OXDK |
+| Build | cmake, ninja | cmake, ninja | make | make, nasm |
+| SDK | none | none | Xbox 360 XDK, yours | 2003 Xbox XDK, yours |
+| Output | `.app` | `butterandjelly.wuhb` | `default.xex` and `fonts/` | `default.xbe` and `fonts/` |
+
+## macOS
+
+Homebrew: `sdl2`, `sdl2_image`, `sdl2_ttf`, `mpg123`, `ffmpeg`, and
+`dylibbundler` to make the bundle self contained. Homebrew's `sdl2` is
+`sdl2-compat`, which loads SDL3 at run time; the packaging script copies that
+in as well, since nothing in the link line names it.
 
 ## Wii U
 

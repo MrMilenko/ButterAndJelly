@@ -7,11 +7,27 @@ src/platform    what differs
   wiiu/         hardware H.264, GX2 video
   xenon/        software H.264, XDK filesystem and networking
   xbox/         software H.264, XDK filesystem and networking
-  desktop/      for testing
+  desktop/      macOS, and where a change is tried first
 ```
 
 `src/core` and `src/ui` are shared. Adding a platform means implementing
 `core/platform.h`, `core/http.h`, `core/video_decoder.h` and `core/audio_output.h`.
+
+`src/core/features.h` is where each target declares its ceilings and what it
+cannot do, so a feature is written once and gated in one place.
+
+## Servers
+
+`JellyfinClient` is the library: browse, playback, watch state, favorites.
+`SeerrClient` is what the library does not have: discovery and requests. Its
+results are shaped as `JfItem` so the same grid, artwork cache and detail
+screen draw them, with `MediaSource` saying which one an item came from.
+
+Anything Seerr reports as already in the library arrives carrying its Jellyfin
+id, so it becomes an ordinary library item and plays.
+
+Both are stored per server, and as a pair: a Jellyfin server and the Seerr
+beside it are saved and restored together.
 
 ## Playback
 
@@ -25,9 +41,11 @@ its own thread and its timestamps are the clock.
 | | Wii U | Xbox 360 | Xbox |
 | --- | --- | --- | --- |
 | Decode | hardware H.264 | libavcodec 54, software, 4 threads | libavcodec 54, software, 1 thread |
-| Colour | CPU | GPU, SDL's YUV shader | GPU, NV2A packed YUY2 |
+| Color | CPU | GPU, SDL's YUV shader | GPU, NV2A packed YUY2 |
 | Drawn by | GX2 directly | SDL | SDL |
 | Cap | 480p | 720p | 480p |
+
+macOS decodes with the system libavcodec and has no cap of its own.
 
 The Wii U draws video itself because SDL's renderer there takes RGB only, and
 converting on the CPU costs 25ms of a 41.7ms frame. It is drawn after the
@@ -52,6 +70,17 @@ interface.
 Posters are requested at the size they are drawn, downloaded on a pool thread,
 decoded and uploaded a few per frame, and cached on disk.
 
+## Playback selection
+
+`POST /Items/{id}/PlaybackInfo` carries a device profile built from
+`features.h`, so the server answers about this build rather than describing
+the file. It returns every version and every track, which is what the audio,
+subtitle and version pickers are built from.
+
+Declaring the text subtitle formats as `External` is what makes the server
+hand a subtitle over as a file instead of re-encoding the picture to burn it
+in. Bitmap tracks have no such option and are burned in.
+
 ## Toolchain
 
 Both Xbox builds go through [OXDK](https://github.com/MrMilenko/OXDK). Two of
@@ -62,3 +91,8 @@ The original Xbox links the XDK, whose kernel imports are stdcall, so OXDK
 compiles with `-fdefault-calling-conv=stdcall`. libavcodec's assembly is cdecl,
 so `mk/ffmpeg.mk` builds that tree cdecl instead. `FFMPEG_SIMD=0` drops the
 assembly entirely, which is the way to tell a decoder fault from a bad input.
+
+Both Xbox makefiles compile to objects beside their sources, so the two targets
+share one object tree. `scripts/build.sh` records which target owns it and
+empties it on a switch. Header dependencies come from `-MMD -MP`, which OXDK's
+own pattern rules do not carry.

@@ -207,11 +207,9 @@ socket_t Connect(const ParsedUrl& url, std::string& error)
     }
 #endif
 
-    // The same tuning the Wii U needed: a bigger receive buffer so a video
-    // segment arrives at something near line rate, and no Nagle delay on a
-    // request that is written in one go.
-    // The original Xbox's pool is fixed at XNetStartup: asking a socket for
-    // more than it holds loses packets rather than enlarging it.
+    // A bigger receive buffer so a segment arrives near line rate, and no
+    // Nagle delay. The original Xbox's pool is fixed at XNetStartup, and
+    // asking for more than it holds loses packets rather than enlarging it.
 #if defined(_XBOX) && !defined(_XENON)
     int receiveBuffer = 64 * 1024;
 #else
@@ -240,10 +238,8 @@ socket_t Connect(const ParsedUrl& url, std::string& error)
         }
         bool refused = false;
         if (!WaitReady(s, Ready::Write, GetTickCount() + kConnectTimeoutMs, &refused)) {
-            // select() on this stack has only ever been seen to time out; it
-            // has never positively signalled anything. So before believing it,
-            // ask the socket itself whether it has a peer: a connected TCP
-            // socket answers getpeername and an unconnected one does not.
+            // select() on this stack only ever times out, so ask the socket
+            // itself: a connected one answers getpeername.
             sockaddr_in peer;
             bj_socklen_t peerLength = sizeof(peer);
             if (getpeername(s, (sockaddr*)&peer, &peerLength) == 0) {
@@ -558,6 +554,12 @@ HttpResponse Perform(const char* method, const std::string& url,
         if      (name == "content-length")    contentLength = ParseInt64(value);
         else if (name == "transfer-encoding") chunked = Lowercased(value).find("chunked") != std::string::npos;
         else if (name == "location")          location = value;
+        else if (name == "set-cookie" && response.setCookie.empty()) {
+            // The attributes after the semicolon are a browser's concern.
+            const size_t semi = value.find(';');
+            response.setCookie = (semi == std::string::npos) ? value
+                                                             : value.substr(0, semi);
+        }
         else if (name == "content-range") {
             // "bytes 1234-5678/9012". Only the first number matters here.
             const size_t space = value.find(' ');
